@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sistema de Inventario (LocalStorage)</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#06b6d4;--muted:#94a3b8;--success:#10b981;--danger:#ef4444}
+    *{box-sizing:border-box}
+    body{font-family:Inter,Segoe UI,Arial;margin:0;background:linear-gradient(180deg,#071021 0%, #071a2a 100%);color:#e6eef6;min-height:100vh;padding:28px}
+    .container{max-width:1100px;margin:0 auto}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    h1{font-size:20px;margin:0}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:16px;border-radius:10px;margin-bottom:14px;box-shadow:0 6px 18px rgba(2,6,23,0.6)}
+    form.row{display:flex;gap:10px;flex-wrap:wrap}
+    .field{flex:1;min-width:160px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input,select{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit}
+    button{background:var(--accent);color:#001018;border:none;padding:10px 12px;border-radius:8px;cursor:pointer}
+    button.ghost{background:transparent;color:var(--accent);border:1px solid rgba(6,182,212,0.12)}
+    .grid{display:grid;grid-template-columns:1fr 380px;gap:12px}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-bottom:1px dashed rgba(255,255,255,0.03);text-align:left;font-size:13px}
+    th{color:var(--muted);font-weight:600}
+    .actions button{margin-right:6px}
+    .muted{color:var(--muted);font-size:13px}
+    .small{font-size:12px}
+    .badge{display:inline-block;padding:4px 8px;border-radius:999px;background:rgba(255,255,255,0.03);color:var(--muted);font-size:12px}
+    .danger{color:var(--danger)}
+    .success{color:var(--success)}
+    .controls{display:flex;gap:8px;align-items:center}
+    .list-wrap{max-height:520px;overflow:auto}
+    .toast{position:fixed;right:20px;bottom:20px;background:#07172a;padding:12px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.03)}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .hr{height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.03),transparent);margin:10px 0}
+    input[type=number]{-moz-appearance:textfield}
+    .tiny{font-size:12px;padding:6px 8px}
+    .search{flex:2}
+    .nowrap{white-space:nowrap}
+    footer{margin-top:12px;color:var(--muted);font-size:13px}
+    @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Sistema de Inventario — Guardado en `localStorage`</h1>
+      <div class="muted small">Local app — abre en el navegador para usar</div>
+    </header>
+
+    <div class="grid">
+      <div>
+        <div class="card">
+          <form id="productForm" class="row" autocomplete="off">
+            <div class="field">
+              <label for="name">Nombre</label>
+              <input id="name" required />
+            </div>
+            <!-- Campo SKU eliminado -->
+            <div class="field">
+              <label for="qty">Cantidad</label>
+              <input id="qty" type="number" min="0" step="1" value="0" required />
+            </div>
+            <!-- Categoría eliminado por simplificación -->
+            <div class="field">
+              <label for="lowStock">Alerta mínimo</label>
+              <input id="lowStock" type="number" min="0" step="1" value="5" />
+            </div>
+            <div style="flex:1;display:flex;align-items:end;gap:8px">
+              <button id="addBtn" type="submit">Agregar</button>
+              <button id="clearForm" type="button" class="ghost">Limpiar</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card hr">
+          <div class="toolbar">
+            <input id="search" class="search" placeholder="Buscar por nombre" />
+            <!-- Selector de orden eliminado por solicitud del usuario -->
+            <button id="clearAll" class="ghost tiny">Borrar todo</button>
+          </div>
+        </div>
+
+        <div class="card list-wrap">
+          <table id="productsTable">
+            <thead>
+                <tr>
+                  <th>Producto</th>
+                  <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+      </div>
+
+      <aside>
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div><strong>Resumen</strong></div>
+            <div class="muted small">Actualizado: <span id="lastModified">—</span></div>
+          </div>
+          <div class="hr"></div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div><span class="badge">Productos: </span> <strong id="countProducts">0</strong></div>
+            <div><span class="badge">Stock Total: </span> <strong id="totalStock">0</strong></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <strong>Historial de Ventas</strong>
+            <button id="clearHistory" class="ghost tiny">Limpiar historial</button>
+          </div>
+          <div class="hr"></div>
+          <div style="max-height:320px;overflow:auto">
+            <table id="historyTable">
+              <thead><tr><th>Fecha</th><th class="nowrap">Producto</th><th>Cant.</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Import/Export removed for simplicity per user request -->
+      </aside>
+
+    </div>
+
+    <footer>
+      - Soporta búsqueda, ordenar, historial y sincronización entre pestañas.
+    </footer>
+  </div>
+
+  <div id="toast" class="toast" style="display:none"></div>
+
+  <script>
+    (function(){
+      const STORAGE_KEY = 'inventory_app_v1';
+
+      const Utils = {
+        nowISO(){ return new Date().toISOString(); },
+        uid(){ return 'p_' + Math.random().toString(36).slice(2,9); }
+      };
+      // normaliza texto: reemplaza 'ñ'/'Ñ' por 'n' (y puede extenderse si hace falta)
+      function normalizeText(s){ return (s||'').replace(/[ñÑ]/g,'n'); }
+
+      const DOM = {
+        form:document.getElementById('productForm'),
+        name:document.getElementById('name'),
+        qty:document.getElementById('qty'),
+        // category removed
+        lowStock:document.getElementById('lowStock'),
+        addBtn:document.getElementById('addBtn'),
+        clearForm:document.getElementById('clearForm'),
+        productsTbody:document.querySelector('#productsTable tbody'),
+        historyTbody:document.querySelector('#historyTable tbody'),
+        countProducts:document.getElementById('countProducts'),
+        totalStock:document.getElementById('totalStock'),
+        lastModified:document.getElementById('lastModified'),
+        search:document.getElementById('search'),
+        // sort selector removed
+        clearAll:document.getElementById('clearAll'),
+        clearHistory:document.getElementById('clearHistory'),
+        toast:document.getElementById('toast')
+      };
+
+      const Store = {
+        state:{products:[],transactions:[],lastId:0,updated:Utils.nowISO()},
+        load(){
+          try{
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if(!raw) return Store.save();
+            const parsed = JSON.parse(raw);
+            if(!parsed.products) parsed.products = [];
+            if(!parsed.transactions) parsed.transactions = [];
+            if(!parsed.lastId) parsed.lastId = 0;
+            Store.state = parsed;
+          }catch(e){
+            console.error('load error',e);
+            Store.state = {products:[],transactions:[],lastId:0,updated:Utils.nowISO()};
+            Store.save();
+          }
+        },
+        save(){ Store.state.updated = Utils.nowISO(); localStorage.setItem(STORAGE_KEY, JSON.stringify(Store.state)); }
+      };
+
+      const Inventory = {
+        init(){ Store.load(); UI.renderAll(); },
+        addProduct({name,qty,lowStock}){
+          if(!name) throw new Error('Nombre requerido');
+          const id = Utils.uid();
+          const product = {id,name:normalizeText(name),qty:Math.max(0,Math.floor(qty||0)),lowStock:Math.max(0,Math.floor(lowStock||0))};
+          Store.state.products.push(product);
+          Store.save(); UI.renderAll(); UI.toast('Producto agregado');
+        },
+        updateProduct(id, data){
+          const p = Store.state.products.find(x=>x.id===id); if(!p) throw new Error('Producto no encontrado');
+          if(data && typeof data.name !== 'undefined') data.name = normalizeText((data.name||'').trim());
+          Object.assign(p, data);
+          Store.save(); UI.renderAll(); UI.toast('Producto actualizado');
+        },
+        deleteProduct(id){ const idx = Store.state.products.findIndex(x=>x.id===id); if(idx===-1) return; Store.state.products.splice(idx,1); Store.save(); UI.renderAll(); UI.toast('Producto borrado'); },
+        sellProduct(id, amount){
+          amount = Math.max(1, Math.floor(amount||0));
+          const p = Store.state.products.find(x=>x.id===id); if(!p) throw new Error('Producto no encontrado');
+          if(p.qty < amount) throw new Error('Stock insuficiente');
+          p.qty -= amount;
+          const t = {id: 't_' + Math.random().toString(36).slice(2,9), productId: p.id, name: p.name, qty: amount, date: Utils.nowISO() };
+          Store.state.transactions.unshift(t);
+          Store.save(); UI.renderAll(); UI.toast('Venta registrada');
+        }
+      };
+
+      const UI = {
+        renderAll(){ UI.renderProducts(); UI.renderSummary(); UI.renderHistory(); DOM.lastModified.textContent = new Date(Store.state.updated).toLocaleString(); },
+        renderProducts(){
+          const q = (DOM.search.value||'').toLowerCase().trim();
+          let list = Store.state.products.slice();
+          if(q) list = list.filter(p => normalizeText((p.name||'')).toLowerCase().includes(q));
+          // Default ordering: por nombre, insensible a mayúsculas/acentos
+          list.sort((a,b)=>(normalizeText(a.name||'')).localeCompare(normalizeText(b.name||''), undefined, {sensitivity:'base'}));
+
+          DOM.productsTbody.innerHTML = '';
+          list.forEach(p=>{
+            const tr = document.createElement('tr');
+            const low = p.lowStock || 0;
+            tr.innerHTML = `
+              <td>
+                <div><strong>${escapeHtml(p.name)}</strong></div>
+                <div class="muted small">Cant: ${p.qty} ${p.qty <= low ? '<span class="danger">(bajo)</span>':''}</div>
+              </td>
+              <td class="actions nowrap">
+                <button class="tiny" data-act="sell" data-id="${p.id}">Vender</button>
+                <button class="tiny" data-act="edit" data-id="${p.id}">Editar</button>
+                <button class="tiny" data-act="delete" data-id="${p.id}">Borrar</button>
+              </td>
+            `;
+            DOM.productsTbody.appendChild(tr);
+          });
+          DOM.countProducts.textContent = Store.state.products.length;
+        },
+        renderSummary(){ const totalStock = Store.state.products.reduce((s,p)=>s+p.qty,0); DOM.totalStock.textContent = totalStock; },
+        renderHistory(){
+          DOM.historyTbody.innerHTML = '';
+          // ordenar por fecha descendente para claridad
+          (Store.state.transactions||[]).slice().sort((a,b)=> new Date(b.date) - new Date(a.date)).slice(0,200).forEach(t=>{
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td class="small">${new Date(t.date).toLocaleString()}</td><td class="nowrap">${escapeHtml(t.name)}</td><td>${t.qty}</td>`;
+            DOM.historyTbody.appendChild(tr);
+          });
+        },
+        toast(msg, timeout=1800){ DOM.toast.textContent = msg; DOM.toast.style.display = 'block'; clearTimeout(UI._toastTimer); UI._toastTimer = setTimeout(()=>{ DOM.toast.style.display='none'; }, timeout); }
+      };
+
+      function escapeHtml(s){ if(s==null) return ''; return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+
+      // UI events
+      DOM.form.addEventListener('submit', function(e){
+        e.preventDefault();
+        try{
+          const name = DOM.name.value.trim();
+          const qty = parseInt(DOM.qty.value)||0;
+          const lowStock = parseInt(DOM.lowStock.value)||0;
+          Inventory.addProduct({name,qty,lowStock});
+          DOM.form.reset(); DOM.qty.value = '0'; DOM.lowStock.value = '5';
+        }catch(err){ UI.toast(err.message || 'Error'); }
+      });
+
+      DOM.clearForm.addEventListener('click', ()=>{ DOM.form.reset(); DOM.qty.value='0'; DOM.lowStock.value='5'; });
+
+      DOM.productsTbody.addEventListener('click', function(e){
+        const btn = e.target.closest('button'); if(!btn) return; const act = btn.dataset.act; const id = btn.dataset.id;
+        if(act==='delete'){ if(confirm('Borrar producto? Esta acción no se puede deshacer.')) Inventory.deleteProduct(id); }
+        else if(act==='edit'){
+          const p = Store.state.products.find(x=>x.id===id); if(!p) return;
+          DOM.name.value = p.name; DOM.qty.value = p.qty; DOM.lowStock.value = p.lowStock||0;
+          DOM.addBtn.textContent = 'Guardar';
+          DOM.form.onsubmit = function(ev){ ev.preventDefault(); try{ Inventory.updateProduct(id, {name:DOM.name.value.trim(), qty:Math.max(0,parseInt(DOM.qty.value)||0), lowStock:Math.max(0,parseInt(DOM.lowStock.value)||0)}); DOM.form.onsubmit=null; DOM.addBtn.textContent='Agregar'; DOM.form.reset(); DOM.qty.value='0'; DOM.lowStock.value='5'; }catch(ex){ UI.toast(ex.message); } };
+        }
+        else if(act==='sell'){
+          const amount = prompt('Cantidad a vender (entera):', '1'); if(!amount) return; try{ Inventory.sellProduct(id, parseInt(amount||0)); }catch(err){ UI.toast(err.message); }
+        }
+      });
+
+      DOM.search.addEventListener('input', ()=>UI.renderProducts());
+
+      DOM.clearAll.addEventListener('click', ()=>{ if(!confirm('Borrar todos los productos y el historial?')) return; Store.state = {products:[],transactions:[],lastId:0,updated:Utils.nowISO()}; Store.save(); UI.renderAll(); UI.toast('Datos borrados'); });
+
+      DOM.clearHistory.addEventListener('click', ()=>{ if(!confirm('Borrar historial de ventas?')) return; Store.state.transactions = []; Store.save(); UI.renderHistory(); UI.toast('Historial borrado'); });
+
+      window.addEventListener('storage', function(e){ if(e.key === STORAGE_KEY){ try{ Store.load(); UI.renderAll(); UI.toast('Datos sincronizados (otra pestaña)'); }catch(_){} } });
+
+      try{ Inventory.init(); }catch(e){ console.error(e); Store.state = {products:[],transactions:[],lastId:0,updated:Utils.nowISO()}; Store.save(); Inventory.init(); }
+
+      window.addEventListener('keydown', function(e){ if((e.ctrlKey||e.metaKey) && e.key==='f'){ e.preventDefault(); DOM.search.focus(); } });
+
+    })();
+  </script>
+</body>
+</html>
