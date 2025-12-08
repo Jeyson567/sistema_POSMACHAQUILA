@@ -45,7 +45,11 @@
   <div class="container">
     <header>
       <h1>Sistema de Inventario — Guardado en `localStorage`</h1>
-      <div class="muted small">Local app — abre en el navegador para usar</div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <div class="muted small">Local app — abre en el navegador para usar</div>
+        <div id="locationBadge" class="muted small">Ubicación: <strong id="currentLocation">—</strong></div>
+        <button id="changeLocation" class="ghost tiny">Cambiar</button>
+      </div>
     </header>
 
     <div class="grid">
@@ -134,9 +138,23 @@
 
   <div id="toast" class="toast" style="display:none"></div>
 
+  <!-- Selector de ubicación: aparece al inicio o al cambiar -->
+  <div id="locationSelect" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(2,6,23,0.75);z-index:60">
+    <div class="card" style="max-width:420px;width:100%;text-align:center">
+      <h2 style="margin-top:0">Selecciona ubicación</h2>
+      <p class="muted small">Elige la base de datos local: cada ubicación usa su propio almacenamiento local.</p>
+      <div style="display:flex;gap:8px;justify-content:center;margin-top:12px">
+        <button id="locBar">Bar</button>
+        <button id="locCocina" class="ghost">Cocina</button>
+      </div>
+      <div style="margin-top:10px" class="muted small">Puedes cambiar después sin perder datos.</div>
+    </div>
+  </div>
+
   <script>
     (function(){
-      const STORAGE_KEY = 'inventory_app_v1';
+      let STORAGE_KEY = null; // se asigna según ubicación seleccionada
+      const LOCATION_KEY = 'inventory_app_location';
 
       const Utils = {
         nowISO(){ return new Date().toISOString(); },
@@ -163,6 +181,11 @@
         clearAll:document.getElementById('clearAll'),
         clearHistory:document.getElementById('clearHistory'),
         toast:document.getElementById('toast')
+        ,currentLocation: document.getElementById('currentLocation')
+        ,changeLocation: document.getElementById('changeLocation')
+        ,locationSelect: document.getElementById('locationSelect')
+        ,locBar: document.getElementById('locBar')
+        ,locCocina: document.getElementById('locCocina')
       };
 
       const Store = {
@@ -211,6 +234,22 @@
           Store.save(); UI.renderAll(); UI.toast('Venta registrada');
         }
       };
+
+      // Configuración de ubicación: usa clave distinta por ubicación
+      function setLocation(loc){
+        if(!loc) return;
+        localStorage.setItem(LOCATION_KEY, loc);
+        STORAGE_KEY = 'inventory_app_v1_' + loc.toLowerCase();
+        if(DOM.currentLocation) DOM.currentLocation.textContent = loc;
+        if(DOM.locationSelect) DOM.locationSelect.style.display = 'none';
+        // inicializar store/UI para la ubicación
+        try{ Inventory.init(); }catch(e){ console.error(e); }
+      }
+
+      // eventos del selector de ubicación
+      if(DOM.locBar) DOM.locBar.addEventListener('click', ()=> setLocation('Bar'));
+      if(DOM.locCocina) DOM.locCocina.addEventListener('click', ()=> setLocation('Cocina'));
+      if(DOM.changeLocation) DOM.changeLocation.addEventListener('click', ()=> { if(DOM.locationSelect) DOM.locationSelect.style.display = 'flex'; });
 
       const UI = {
         renderAll(){ UI.renderProducts(); UI.renderSummary(); UI.renderHistory(); DOM.lastModified.textContent = new Date(Store.state.updated).toLocaleString(); },
@@ -289,9 +328,22 @@
 
       DOM.clearHistory.addEventListener('click', ()=>{ if(!confirm('Borrar historial de ventas?')) return; Store.state.transactions = []; Store.save(); UI.renderHistory(); UI.toast('Historial borrado'); });
 
-      window.addEventListener('storage', function(e){ if(e.key === STORAGE_KEY){ try{ Store.load(); UI.renderAll(); UI.toast('Datos sincronizados (otra pestaña)'); }catch(_){} } });
+      window.addEventListener('storage', function(e){
+        if(e.key === STORAGE_KEY){ try{ Store.load(); UI.renderAll(); UI.toast('Datos sincronizados (otra pestaña)'); }catch(_){} }
+        if(e.key === LOCATION_KEY){
+          // si la ubicación cambió en otra pestaña, aplicar la nueva ubicación
+          const newLoc = e.newValue;
+          if(newLoc){ setLocation(newLoc); UI.toast('Ubicación cambiada (otra pestaña)'); }
+          else { if(DOM.locationSelect) DOM.locationSelect.style.display = 'flex'; }
+        }
+      });
 
-      try{ Inventory.init(); }catch(e){ console.error(e); Store.state = {products:[],transactions:[],lastId:0,updated:Utils.nowISO()}; Store.save(); Inventory.init(); }
+      // Inicialización: si hay ubicación guardada, la usamos; si no, mostramos selector
+      (function initLocation(){
+        const saved = localStorage.getItem(LOCATION_KEY);
+        if(saved){ setLocation(saved); }
+        else { if(DOM.locationSelect) DOM.locationSelect.style.display = 'flex'; }
+      })();
 
       window.addEventListener('keydown', function(e){ if((e.ctrlKey||e.metaKey) && e.key==='f'){ e.preventDefault(); DOM.search.focus(); } });
 
