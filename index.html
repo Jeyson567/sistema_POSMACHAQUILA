@@ -34,6 +34,10 @@ button{
     margin-top:4px;
     cursor:pointer;
 }
+.print-btn{
+    background:#e0e0e0;
+    font-weight:bold;
+}
 table{
     width:100%;
     border-collapse:collapse;
@@ -60,21 +64,18 @@ th,td{
     .inventory{
         width:100%;
         box-shadow:none;
-        page-break-inside: avoid;
-        margin-bottom:30px;
+        margin:0;
     }
-    h1{
-        margin-bottom:20px;
+    .no-print{
+        display:none;
     }
     table{
         page-break-inside:auto;
     }
     tr{
         page-break-inside:avoid;
-        page-break-after:auto;
     }
 }
-
 </style>
 </head>
 
@@ -82,14 +83,13 @@ th,td{
 
 <h1>Control de Inventario</h1>
 
-<button onclick="window.print()">🖨 Imprimir inventarios</button>
-
 <div class="container">
 
 <!-- BAR -->
-<div class="inventory">
+<div class="inventory" id="barSection">
 <h2>Bar</h2>
 
+<div class="no-print">
 <input id="barNombre" placeholder="Nombre del producto">
 <input id="barCantidad" type="number" placeholder="Cantidad">
 
@@ -97,6 +97,8 @@ th,td{
 <button onclick="sumarCantidad('bar')">Agregar cantidad</button>
 <button onclick="venderProducto('bar')">Vender</button>
 <button onclick="eliminarProducto('bar')">Eliminar producto</button>
+<button class="print-btn" onclick="imprimirSeccion('barSection')">🖨 Imprimir Bar</button>
+</div>
 
 <table>
 <thead><tr><th>Producto</th><th>Cantidad</th></tr></thead>
@@ -105,9 +107,10 @@ th,td{
 </div>
 
 <!-- COCINA -->
-<div class="inventory">
+<div class="inventory" id="cocinaSection">
 <h2>Cocina</h2>
 
+<div class="no-print">
 <input id="cocinaNombre" placeholder="Nombre del producto">
 <input id="cocinaCantidad" type="number" placeholder="Cantidad">
 
@@ -115,6 +118,8 @@ th,td{
 <button onclick="sumarCantidad('cocina')">Agregar cantidad</button>
 <button onclick="venderProducto('cocina')">Vender</button>
 <button onclick="eliminarProducto('cocina')">Eliminar producto</button>
+<button class="print-btn" onclick="imprimirSeccion('cocinaSection')">🖨 Imprimir Cocina</button>
+</div>
 
 <table>
 <thead><tr><th>Producto</th><th>Cantidad</th></tr></thead>
@@ -142,6 +147,7 @@ function actualizarTabla(tipo){
         tabla.innerHTML+=`<tr><td>${p}</td><td>${inv[p]}</td></tr>`;
     }
 }
+
 function agregarProducto(tipo){
     const n=document.getElementById(tipo+'Nombre').value.trim();
     const c=parseInt(document.getElementById(tipo+'Cantidad').value);
@@ -184,6 +190,21 @@ function eliminarProducto(tipo){
     delete inv[n];
     guardarInventario(tipo,inv);
     actualizarTabla(tipo);
+}
+
+/* ===== IMPRIMIR SOLO UNA SECCIÓN ===== */
+function imprimirSeccion(id){
+    const seccion=document.getElementById(id).innerHTML;
+    const original=document.body.innerHTML;
+
+    document.body.innerHTML = `
+        <h1>Inventario</h1>
+        <div>${seccion}</div>
+    `;
+
+    window.print();
+    document.body.innerHTML = original;
+    location.reload();
 }
 
 actualizarTabla('bar');
