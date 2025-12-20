@@ -40,24 +40,49 @@ table{
     margin-top:10px;
 }
 th,td{
-    border:1px solid #ccc;
+    border:1px solid #000;
     padding:5px;
     text-align:center;
 }
-.sin{
-    background:#ffb3b3;
-    font-weight:bold;
+
+/* ===== IMPRESIÓN ===== */
+@media print {
+    body{
+        background:#fff;
+        padding:0;
+    }
+    button, input{
+        display:none;
+    }
+    .container{
+        display:block;
+    }
+    .inventory{
+        width:100%;
+        box-shadow:none;
+        page-break-inside: avoid;
+        margin-bottom:30px;
+    }
+    h1{
+        margin-bottom:20px;
+    }
+    table{
+        page-break-inside:auto;
+    }
+    tr{
+        page-break-inside:avoid;
+        page-break-after:auto;
+    }
 }
-.poco{
-    background:#fff0b3;
-    font-weight:bold;
-}
+
 </style>
 </head>
 
 <body>
 
 <h1>Control de Inventario</h1>
+
+<button onclick="window.print()">🖨 Imprimir inventarios</button>
 
 <div class="container">
 
@@ -67,7 +92,6 @@ th,td{
 
 <input id="barNombre" placeholder="Nombre del producto">
 <input id="barCantidad" type="number" placeholder="Cantidad">
-<input id="barMinimo" type="number" placeholder="Límite mínimo (ej: 5)">
 
 <button onclick="agregarProducto('bar')">Agregar nuevo</button>
 <button onclick="sumarCantidad('bar')">Agregar cantidad</button>
@@ -75,7 +99,7 @@ th,td{
 <button onclick="eliminarProducto('bar')">Eliminar producto</button>
 
 <table>
-<thead><tr><th>Producto</th><th>Cantidad</th><th>Estado</th></tr></thead>
+<thead><tr><th>Producto</th><th>Cantidad</th></tr></thead>
 <tbody id="barTabla"></tbody>
 </table>
 </div>
@@ -86,7 +110,6 @@ th,td{
 
 <input id="cocinaNombre" placeholder="Nombre del producto">
 <input id="cocinaCantidad" type="number" placeholder="Cantidad">
-<input id="cocinaMinimo" type="number" placeholder="Límite mínimo (ej: 5)">
 
 <button onclick="agregarProducto('cocina')">Agregar nuevo</button>
 <button onclick="sumarCantidad('cocina')">Agregar cantidad</button>
@@ -94,7 +117,7 @@ th,td{
 <button onclick="eliminarProducto('cocina')">Eliminar producto</button>
 
 <table>
-<thead><tr><th>Producto</th><th>Cantidad</th><th>Estado</th></tr></thead>
+<thead><tr><th>Producto</th><th>Cantidad</th></tr></thead>
 <tbody id="cocinaTabla"></tbody>
 </table>
 </div>
@@ -111,83 +134,52 @@ function guardarInventario(tipo,data){
 function confirmar(msg){
     return confirm(msg);
 }
-
 function actualizarTabla(tipo){
     const tabla=document.getElementById(tipo+'Tabla');
-    const minimo=parseInt(document.getElementById(tipo+'Minimo').value) || 0;
     const inv=obtenerInventario(tipo);
     tabla.innerHTML='';
-
     for(let p in inv){
-        let estado='OK';
-        let clase='';
-
-        if(inv[p] === 0){
-            estado='SIN EXISTENCIA';
-            clase='sin';
-        }else if(inv[p] <= minimo && minimo > 0){
-            estado='POCA EXISTENCIA';
-            clase='poco';
-        }
-
-        tabla.innerHTML += `
-        <tr class="${clase}">
-            <td>${p}</td>
-            <td>${inv[p]}</td>
-            <td>${estado}</td>
-        </tr>`;
+        tabla.innerHTML+=`<tr><td>${p}</td><td>${inv[p]}</td></tr>`;
     }
 }
-
 function agregarProducto(tipo){
     const n=document.getElementById(tipo+'Nombre').value.trim();
     const c=parseInt(document.getElementById(tipo+'Cantidad').value);
     if(!n||c<0)return;
     if(!confirmar(`¿Agregar "${n}" con cantidad ${c}?`))return;
-
     const inv=obtenerInventario(tipo);
     if(inv[n]!==undefined)return;
-
     inv[n]=c;
     guardarInventario(tipo,inv);
     actualizarTabla(tipo);
 }
-
 function sumarCantidad(tipo){
     const n=document.getElementById(tipo+'Nombre').value.trim();
     const c=parseInt(document.getElementById(tipo+'Cantidad').value);
     if(!n||c<=0)return;
     if(!confirmar(`¿Sumar ${c} a "${n}"?`))return;
-
     const inv=obtenerInventario(tipo);
     if(inv[n]===undefined)return;
-
     inv[n]+=c;
     guardarInventario(tipo,inv);
     actualizarTabla(tipo);
 }
-
 function venderProducto(tipo){
     const n=document.getElementById(tipo+'Nombre').value.trim();
     const c=parseInt(document.getElementById(tipo+'Cantidad').value);
     if(!n||c<=0)return;
     if(!confirmar(`¿Vender ${c} de "${n}"?`))return;
-
     const inv=obtenerInventario(tipo);
     if(inv[n]===undefined)return;
-
     inv[n]-=c;
-    if(inv[n]<0) inv[n]=0;
-
+    if(inv[n]<0)inv[n]=0;
     guardarInventario(tipo,inv);
     actualizarTabla(tipo);
 }
-
 function eliminarProducto(tipo){
     const n=document.getElementById(tipo+'Nombre').value.trim();
     if(!n)return;
     if(!confirmar(`¿ELIMINAR COMPLETAMENTE "${n}"?`))return;
-
     const inv=obtenerInventario(tipo);
     delete inv[n];
     guardarInventario(tipo,inv);
