@@ -77,6 +77,11 @@
 
   window.posCanViewSection = canViewSection;
 
+  window.posGetCajeroNombre = function () {
+    return (session.profile && session.profile.nombre) ||
+      (session.user && session.user.email) || "";
+  };
+
   function applyRoleUI() {
     var isAdmin = session.role === ROLES.ADMIN;
     document.querySelectorAll("[data-role-only]").forEach(function (el) {

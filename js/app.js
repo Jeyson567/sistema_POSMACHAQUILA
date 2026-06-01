@@ -910,24 +910,90 @@
     }
   }
 
+  function padTicketNum(n) {
+    return String(n || 0).padStart(6, "0");
+  }
+
+  function formatTicketDateTime(d) {
+    if (!d) return "—";
+    var dt = d instanceof Date ? d : (typeof tsToDate === "function" ? tsToDate(d) : null);
+    if (!dt) dt = new Date(d);
+    if (!dt || isNaN(dt.getTime())) return "—";
+    return dt.toLocaleString("es-GT", {
+      weekday: "short",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    });
+  }
+
+  function ticketCajeroNombre(data) {
+    if (data && data.cajeroNombre) return data.cajeroNombre;
+    if (typeof window.posGetCajeroNombre === "function") {
+      var n = window.posGetCajeroNombre();
+      if (n) return n;
+    }
+    return "—";
+  }
+
+  function ticketTipoPagoLabel(tipo) {
+    return tipo === "fiado" ? "Fiado" : "Efectivo";
+  }
+
   function imprimirTicket(data) {
     const el = $("ticket-print");
-    let lines = "";
+    if (!el) return;
+
+    var productLines = "";
     (data.items || []).forEach(function (it) {
-      lines += "<div class='ticket-row'><span>" + escapeHtml(it.nombre).substring(0, 18) +
-        " x" + it.cantidad + "</span><span>" + formatMoney(it.subtotal || it.cantidad * it.precioUnitario) + "</span></div>";
+      var cant = Number(it.cantidad) || 0;
+      var precio = Number(it.precioUnitario) || 0;
+      var sub = it.subtotal != null ? Number(it.subtotal) : cant * precio;
+      productLines +=
+        "<div class='ticket-item'>" +
+        "<div class='ticket-item-name'>" + escapeHtml(it.nombre || "Producto") + "</div>" +
+        "<div class='ticket-item-detail'>" +
+        "<span class='ticket-item-qty'>" + cant + " x " + formatMoney(precio) + "</span>" +
+        "<span class='ticket-item-amt'>" + formatMoney(sub) + "</span>" +
+        "</div></div>";
     });
+
+    var pagoHtml =
+      "<div class='ticket-pay-block'>" +
+      "<div class='ticket-pay-row'><span>Forma de pago</span><strong>" + ticketTipoPagoLabel(data.tipoPago) + "</strong></div>";
+
+    if (data.tipoPago === "efectivo") {
+      pagoHtml +=
+        "<div class='ticket-pay-row'><span>Recibido</span><strong>" + formatMoney(data.efectivoRecibido) + "</strong></div>" +
+        "<div class='ticket-vuelto-box'>" +
+        "<div class='ticket-vuelto-row'><span>VUELTO</span><span>" + formatMoney(data.vuelto) + "</span></div>" +
+        "</div>";
+    }
+    pagoHtml += "</div>";
+
     el.innerHTML =
-      "<div class='ticket-center'><strong>FERRETERÍA MACHAQUILA</strong><br>" +
-      "Venta de materiales<br>Ticket #" + data.numero + "<br>" + formatDateTime(data.fecha) + "</div>" +
-      "<div class='ticket-line'></div>" + lines +
+      "<div class='ticket-center'>" +
+      "<div class='ticket-brand'>FERRETERÍA MACHAQUILA</div>" +
+      "<div class='ticket-subtitle'>Venta de Materiales</div>" +
+      "<div class='ticket-num'>Ticket #" + padTicketNum(data.numero) + "</div>" +
+      "<div class='ticket-datetime'>" + formatTicketDateTime(data.fecha) + "</div>" +
+      "<div class='ticket-meta-row'>Cajero: " + escapeHtml(ticketCajeroNombre(data)) + "</div>" +
+      "</div>" +
       "<div class='ticket-line'></div>" +
-      "<div class='ticket-row'><strong>TOTAL</strong><strong>" + formatMoney(data.total) + "</strong></div>" +
-      "<div class='ticket-row'><span>Pago</span><span>" + (data.tipoPago === "fiado" ? "Fiado" : "Efectivo") + "</span></div>" +
-      (data.tipoPago === "efectivo" ?
-        "<div class='ticket-row'><span>Recibido</span><span>" + formatMoney(data.efectivoRecibido) + "</span></div>" +
-        "<div class='ticket-row'><span>Vuelto</span><span>" + formatMoney(data.vuelto) + "</span></div>" : "") +
-      "<div class='ticket-line'></div><div class='ticket-center'>¡Gracias por su compra!</div>";
+      "<div class='ticket-section-title'>Productos</div>" +
+      productLines +
+      "<div class='ticket-line'></div>" +
+      "<div class='ticket-total-box'>" +
+      "<div class='ticket-total-row'><span>TOTAL</span><span>" + formatMoney(data.total) + "</span></div>" +
+      "</div>" +
+      pagoHtml +
+      "<div class='ticket-line'></div>" +
+      "<div class='ticket-center ticket-thanks'>¡Gracias por su compra!</div>";
+
     el.classList.add("show");
     window.print();
     setTimeout(function () { el.classList.remove("show"); }, 500);
