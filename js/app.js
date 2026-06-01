@@ -428,6 +428,82 @@
     renderInventario();
   });
 
+  var productoFormAllowSubmit = false;
+
+  function modalProductoAbierto() {
+    var m = $("modalProducto");
+    return !!(m && m.classList.contains("open"));
+  }
+
+  function focusCampoCodigoProducto() {
+    var cod = $("prodCodigo");
+    if (!cod) return;
+    setTimeout(function () {
+      cod.focus();
+      cod.select();
+    }, 50);
+  }
+
+  function bloquearEnterEscannerCodigo(e) {
+    if (e.key !== "Enter" && e.keyCode !== 13) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var nombre = $("prodNombre");
+    if (nombre) nombre.focus();
+  }
+
+  function initInventarioEscanner() {
+    var prodCodigo = $("prodCodigo");
+    var formProducto = $("formProducto");
+    if (!prodCodigo || !formProducto) return;
+
+    var btnGuardar = formProducto.querySelector('button[type="submit"]');
+    if (btnGuardar) {
+      btnGuardar.addEventListener("click", function () {
+        productoFormAllowSubmit = true;
+      });
+    }
+
+    ["keydown", "keypress"].forEach(function (ev) {
+      prodCodigo.addEventListener(ev, bloquearEnterEscannerCodigo);
+    });
+    prodCodigo.addEventListener("keyup", function (e) {
+      if (e.key === "Enter" || e.keyCode === 13) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    });
+
+    formProducto.addEventListener("keydown", function (e) {
+      if ((e.key !== "Enter" && e.keyCode !== 13) || e.target !== prodCodigo) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
+
+    formProducto.addEventListener("submit", function (e) {
+      if (!productoFormAllowSubmit) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }, true);
+  }
+
+  safeOn("invBuscar", "keydown", function (e) {
+    if ((e.key !== "Enter" && e.keyCode !== 13) || !modalProductoAbierto()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var cod = $("prodCodigo");
+    var buscar = $("invBuscar");
+    if (cod && buscar && buscar.value.trim()) {
+      cod.value = buscar.value.trim();
+      buscar.value = "";
+      invFilter = "";
+      renderInventario();
+      var nombre = $("prodNombre");
+      if (nombre) nombre.focus();
+    }
+  });
+
   function renderInventario() {
     const tbody = $("invTableBody");
     if (!tbody) return;
@@ -462,15 +538,18 @@
   }
 
   safeOn("btnNuevoProducto", "click", function () {
+    productoFormAllowSubmit = false;
     $("formProducto").reset();
     $("prodId").value = "";
     $("modalProductoTitulo").textContent = "Nuevo producto";
     openModal("modalProducto");
+    focusCampoCodigoProducto();
   });
 
   function editProducto(id) {
     const p = getProducto(id);
     if (!p) return;
+    productoFormAllowSubmit = false;
     $("prodId").value = p.id;
     $("prodNombre").value = p.nombre || "";
     $("prodCodigo").value = p.codigoBarras || "";
@@ -485,6 +564,8 @@
 
   safeOn("formProducto", "submit", function (e) {
     e.preventDefault();
+    if (!productoFormAllowSubmit) return;
+    productoFormAllowSubmit = false;
     if (!ensureDb()) return;
     const data = {
       nombre: $("prodNombre").value.trim(),
@@ -1393,6 +1474,7 @@
     try {
       initModales();
       initNavegacion();
+      initInventarioEscanner();
     } catch (e) {
       console.error("[POS] Error UI:", e);
     }
