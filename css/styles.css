@@ -522,41 +522,19 @@ table.data-table tr:hover td { background: #f9fafb; }
   font-size: .875rem;
 }
 
-/* Ticket térmico 80mm */
-@media print {
-  @page {
-    size: 80mm auto;
-    margin: 0;
-  }
-
-  body * { visibility: hidden; }
-  #ticket-print, #ticket-print * { visibility: visible; }
-  #ticket-print {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 80mm;
-    max-width: 80mm;
-    margin: 0;
-    padding: 2mm 3mm;
-  }
-  #cotizacion-print, #cotizacion-print * { visibility: visible; }
-  #cotizacion-print {
-    position: absolute;
-    left: 0; top: 0;
-    width: 100%;
-  }
-}
-
+/* Ticket térmico 80mm — 302px ≈ 80mm @ 96dpi (área útil del rollo) */
 #ticket-print {
   display: none;
   box-sizing: border-box;
-  font-family: "Courier New", Courier, "Lucida Console", monospace;
-  font-size: 13px;
-  line-height: 1.4;
   width: 80mm;
+  width: 302px;
   max-width: 80mm;
-  padding: 3mm 4mm;
+  max-width: 302px;
+  margin: 0;
+  padding: 2mm 1.5mm;
+  font-family: "Courier New", Courier, "Lucida Console", monospace;
+  font-size: 14px;
+  line-height: 1.35;
   color: #000;
   background: #fff;
   -webkit-print-color-adjust: exact;
@@ -565,59 +543,61 @@ table.data-table tr:hover td { background: #f9fafb; }
 
 #ticket-print.show { display: block; }
 
-.ticket-center { text-align: center; }
-.ticket-line { border-top: 1px dashed #000; margin: 8px 0; }
+.ticket-center { text-align: center; width: 100%; }
+.ticket-line { border-top: 1px dashed #000; margin: 8px 0; width: 100%; }
 
 .ticket-brand {
-  font-size: 17px;
+  font-size: 22px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  line-height: 1.2;
+  letter-spacing: 0.03em;
+  line-height: 1.15;
 }
 
 .ticket-subtitle {
-  font-size: 12px;
+  font-size: 14px;
   margin-top: 4px;
-  text-transform: capitalize;
 }
 
 .ticket-num {
   display: block;
   margin: 10px 0 6px;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
 }
 
 .ticket-datetime {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   margin: 2px 0;
 }
 
 .ticket-meta-row {
-  font-size: 12px;
+  font-size: 14px;
   margin: 3px 0;
 }
 
 .ticket-section-title {
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   margin: 6px 0 8px;
   text-align: center;
+  width: 100%;
 }
 
 .ticket-item {
-  margin-bottom: 8px;
+  width: 100%;
+  margin-bottom: 10px;
   page-break-inside: avoid;
 }
 
 .ticket-item-name {
-  font-size: 13px;
+  width: 100%;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 1.25;
+  line-height: 1.3;
   word-wrap: break-word;
   overflow-wrap: anywhere;
 }
@@ -626,70 +606,219 @@ table.data-table tr:hover td { background: #f9fafb; }
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 6px;
-  margin-top: 3px;
-  font-size: 12px;
+  width: 100%;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 14px;
 }
 
 .ticket-item-qty {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
 }
 
 .ticket-item-amt {
+  flex: 0 0 auto;
   font-weight: 700;
   white-space: nowrap;
   text-align: right;
 }
 
 .ticket-total-box {
+  width: 100%;
   margin: 10px 0 8px;
-  padding: 8px 0;
-  border-top: 2px solid #000;
-  border-bottom: 2px solid #000;
+  padding: 10px 0;
+  border-top: 3px solid #000;
+  border-bottom: 3px solid #000;
 }
 
 .ticket-total-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 20px;
+  width: 100%;
+  font-size: 26px;
   font-weight: 700;
-  letter-spacing: 0.02em;
 }
 
-.ticket-pay-block { margin: 6px 0; }
+.ticket-pay-block { width: 100%; margin: 8px 0; }
 
 .ticket-pay-row {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  gap: 8px;
-  font-size: 13px;
-  margin: 5px 0;
+  width: 100%;
+  gap: 6px;
+  font-size: 14px;
+  margin: 6px 0;
 }
 
 .ticket-pay-row strong { font-weight: 700; }
 
 .ticket-vuelto-box {
+  width: 100%;
+  box-sizing: border-box;
   margin-top: 8px;
-  padding: 7px 8px;
+  padding: 8px 6px;
   border: 2px dashed #000;
-  background: #f5f5f5;
+  background: #eee;
 }
 
 .ticket-vuelto-row {
   display: flex;
   justify-content: space-between;
-  font-size: 16px;
+  width: 100%;
+  font-size: 18px;
   font-weight: 700;
 }
 
 .ticket-thanks {
+  width: 100%;
   margin-top: 12px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.35;
+}
+
+/* Impresión térmica 80mm */
+@media print {
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    zoom: 1 !important;
+    transform: none !important;
+    -webkit-text-size-adjust: 100% !important;
+    text-size-adjust: 100% !important;
+  }
+
+  /* Cotización (papel carta / A4) */
+  body:not(.printing-ticket) * { visibility: hidden; }
+  body:not(.printing-ticket) #cotizacion-print.show,
+  body:not(.printing-ticket) #cotizacion-print.show * { visibility: visible; }
+  body:not(.printing-ticket) #cotizacion-print.show {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    padding: 20mm;
+  }
+
+  /* Ticket térmico */
+  html.printing-ticket,
+  body.printing-ticket {
+    width: 80mm !important;
+    min-width: 80mm !important;
+    max-width: 80mm !important;
+    height: auto !important;
+    overflow: visible !important;
+    zoom: 1 !important;
+    transform: none !important;
+  }
+
+  body.printing-ticket * { visibility: hidden; }
+  body.printing-ticket #ticket-print.show,
+  body.printing-ticket #ticket-print.show * { visibility: visible; }
+
+  body.printing-ticket #ticket-print.show {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: block !important;
+    box-sizing: border-box;
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 1mm 1mm !important;
+    font-family: "Courier New", Courier, monospace !important;
+    font-size: 14pt !important;
+    line-height: 1.35 !important;
+    color: #000 !important;
+    background: #fff !important;
+    zoom: 1 !important;
+    transform: none !important;
+    scale: 1;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-brand {
+    font-size: 24pt !important;
+    font-weight: 700 !important;
+    text-align: center;
+    width: 100%;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-subtitle {
+    font-size: 14pt !important;
+    text-align: center;
+    width: 100%;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-num {
+    font-size: 18pt !important;
+    text-align: center;
+    width: 100%;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-datetime,
+  body.printing-ticket #ticket-print.show .ticket-meta-row {
+    font-size: 12pt !important;
+    text-align: center;
+    width: 100%;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-section-title {
+    font-size: 12pt !important;
+    width: 100%;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-item {
+    width: 100% !important;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-item-name {
+    font-size: 14pt !important;
+    width: 100% !important;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-item-detail {
+    font-size: 13pt !important;
+    width: 100% !important;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-total-box {
+    width: 100% !important;
+    border-top-width: 3px !important;
+    border-bottom-width: 3px !important;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-total-row {
+    font-size: 26pt !important;
+    width: 100% !important;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-pay-row {
+    font-size: 14pt !important;
+    width: 100% !important;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-vuelto-row {
+    font-size: 18pt !important;
+    width: 100% !important;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-thanks {
+    font-size: 14pt !important;
+    width: 100% !important;
+  }
+
+  body.printing-ticket #ticket-print.show .ticket-line {
+    width: 100% !important;
+  }
 }
 
 #cotizacion-print {

@@ -995,8 +995,17 @@
       "<div class='ticket-center ticket-thanks'>¡Gracias por su compra!</div>";
 
     el.classList.add("show");
+    document.documentElement.classList.add("printing-ticket");
+    document.body.classList.add("printing-ticket");
+    var pageStyle = $("ticketThermalPageStyle");
+    if (pageStyle) pageStyle.disabled = false;
     window.print();
-    setTimeout(function () { el.classList.remove("show"); }, 500);
+    setTimeout(function () {
+      el.classList.remove("show");
+      document.documentElement.classList.remove("printing-ticket");
+      document.body.classList.remove("printing-ticket");
+      if (pageStyle) pageStyle.disabled = true;
+    }, 800);
   }
 
   safeOn("btnBuscarTickets", "click", function () {

@@ -8,6 +8,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
+  <!-- @page 80mm solo al imprimir ticket (se activa desde app.js) -->
+  <style id="ticketThermalPageStyle" media="print" disabled>
+    @page { size: 80mm auto; margin: 0; }
+  </style>
 </head>
 <body>
   <div id="loginScreen" class="login-screen" style="display:flex">
