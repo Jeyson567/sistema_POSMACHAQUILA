@@ -179,7 +179,7 @@
   }
 
   function updateCajaBanner() {
-    if (!state.cajaActual) {
+    if (!state.cajaActual || !isCajaAbierta(state.cajaActual)) {
       showBanner(
         "<strong>Paso 1:</strong> Vaya a <b>Caja</b> y pulse <b>Abrir caja</b> antes de vender. " +
         "Inventario y clientes sí funcionan sin caja abierta.",
@@ -257,16 +257,29 @@
       renderCotizaciones();
     });
 
-    watchCol("caja", db.collection(COL.caja).limit(30), function (snap) {
+    watchCol("cajaAbierta", db.collection(COL.caja).where("abierta", "==", true).limit(1), function (snap) {
+      state.cajaActual = null;
+      snap.forEach(function (d) {
+        state.cajaActual = parseCajaDoc(d);
+      });
+      renderCaja();
+      renderDashboard();
+      renderContable();
+      updateCajaBanner();
+    });
+
+    watchCol("caja", db.collection(COL.caja).limit(50), function (snap) {
       state.cajas = [];
       snap.forEach(function (d) {
-        const c = Object.assign({ id: d.id }, d.data());
-        c.fechaApertura = tsToDate(c.fechaApertura);
-        c.fechaCierre = tsToDate(c.fechaCierre);
-        state.cajas.push(c);
+        state.cajas.push(parseCajaDoc(d));
       });
       state.cajas.sort(function (a, b) { return (b.fechaApertura || 0) - (a.fechaApertura || 0); });
-      state.cajaActual = state.cajas.find(function (c) { return c.abierta === true; }) || null;
+      var abiertaEnLista = state.cajas.find(isCajaAbierta) || null;
+      if (!state.cajaActual || !isCajaAbierta(state.cajaActual)) {
+        state.cajaActual = abiertaEnLista;
+      } else if (!state.cajas.some(function (c) { return c.id === state.cajaActual.id; })) {
+        state.cajas.unshift(state.cajaActual);
+      }
       renderCaja();
       renderDashboard();
       renderContable();
@@ -340,13 +353,29 @@
     const ticketsHoy = state.tickets.filter(function (t) { return isToday(t.fecha); }).length;
 
     let efectivo = 0;
-    if (state.cajaActual) {
+    if (state.cajaActual && isCajaAbierta(state.cajaActual)) {
       efectivo = calcEfectivoCaja(state.cajaActual);
     }
 
     return {
       ventasTotal, ganancias, productosVendidos, top, gastosHoy, ticketsHoy, efectivo, numVentas: vh.length
     };
+  }
+
+  function parseCajaDoc(d) {
+    const c = Object.assign({ id: d.id }, d.data());
+    c.fechaApertura = tsToDate(c.fechaApertura);
+    c.fechaCierre = tsToDate(c.fechaCierre);
+    if (c.estado === "abierta" && c.abierta !== false) c.abierta = true;
+    if (c.estado === "cerrada") c.abierta = false;
+    return c;
+  }
+
+  function isCajaAbierta(c) {
+    if (!c) return false;
+    if (c.abierta === true) return true;
+    if (c.estado === "abierta") return true;
+    return false;
   }
 
   function calcEfectivoCaja(caja) {
@@ -368,6 +397,31 @@
     });
 
     return total;
+  }
+
+  function calcResumenCaja(caja) {
+    const res = { inicial: 0, ventas: 0, gastos: 0, retiros: 0, esperado: 0 };
+    if (!caja) return res;
+    const cajaId = caja.id;
+    const apertura = caja.fechaApertura;
+    res.inicial = caja.montoInicial || 0;
+    state.ventas.forEach(function (v) {
+      if (v.cajaId === cajaId && v.fecha >= apertura) {
+        res.ventas += v.total || 0;
+      }
+    });
+    state.movimientos.forEach(function (m) {
+      if (m.cajaId === cajaId && m.fecha >= apertura) {
+        if (m.tipo === "gasto") res.gastos += m.monto || 0;
+        if (m.tipo === "retiro") res.retiros += m.monto || 0;
+      }
+    });
+    res.esperado = calcEfectivoCaja(caja);
+    return res;
+  }
+
+  function nombreUsuarioCaja() {
+    return typeof window.posGetCajeroNombre === "function" ? window.posGetCajeroNombre() : "";
   }
 
   function renderStatCards(containerId, stats) {
@@ -779,7 +833,7 @@
       toast("Carrito vacío", "warning");
       return;
     }
-    if (!state.cajaActual) {
+    if (!state.cajaActual || !isCajaAbierta(state.cajaActual)) {
       toast("Debe abrir la caja primero", "error");
       return;
     }
@@ -1337,20 +1391,31 @@
 
   /* ─── CAJA ─── */
   function renderCaja() {
-    const abierta = state.cajaActual;
-    $("cajaFormApertura").style.display = abierta ? "none" : "grid";
-    $("cajaAbiertaPanel").style.display = abierta ? "block" : "none";
+    const abierta = state.cajaActual && isCajaAbierta(state.cajaActual) ? state.cajaActual : null;
+
+    var btnAbrir = $("btnAbrirCaja");
+    var btnCerrar = $("btnCerrarCaja");
+    var panelCerrada = $("cajaCerradaPanel");
+    var panelAbierta = $("cajaAbiertaPanel");
+    if (btnAbrir) btnAbrir.style.display = abierta ? "none" : "inline-flex";
+    if (btnCerrar) btnCerrar.style.display = abierta ? "inline-flex" : "none";
+    if (panelCerrada) panelCerrada.style.display = abierta ? "none" : "block";
+    if (panelAbierta) panelAbierta.style.display = abierta ? "block" : "none";
     $("cajaEstadoTitulo").textContent = abierta ? "Caja abierta" : "Caja cerrada";
 
-    const efectivo = abierta ? calcEfectivoCaja(abierta) : 0;
-    const vh = ventasHoy().reduce(function (s, v) { return s + (v.total || 0); }, 0);
-
+    const resumen = calcResumenCaja(abierta);
     $("cajaStats").innerHTML =
-      statCard("Efectivo actual", formatMoney(efectivo), "accent") +
-      statCard("Ventas hoy", formatMoney(vh), "success") +
-      statCard("Monto inicial", abierta ? formatMoney(abierta.montoInicial) : "—", "");
+      statCard("Saldo inicial", abierta ? formatMoney(resumen.inicial) : "—", "") +
+      statCard("Ventas del día", abierta ? formatMoney(resumen.ventas) : "—", "success") +
+      statCard("Gastos", abierta ? formatMoney(resumen.gastos) : "—", "") +
+      statCard("Retiros", abierta ? formatMoney(resumen.retiros) : "—", "") +
+      statCard("Efectivo esperado", abierta ? formatMoney(resumen.esperado) : "—", "accent");
 
-    const cortes = state.cajas.filter(function (c) { return !c.abierta; }).slice(0, 20);
+    if (abierta && abierta.usuarioApertura) {
+      $("cajaEstadoTitulo").textContent = "Caja abierta · " + abierta.usuarioApertura;
+    }
+
+    const cortes = state.cajas.filter(function (c) { return !isCajaAbierta(c); }).slice(0, 20);
     $("cortesBody").innerHTML = cortes.length ? cortes.map(function (c) {
       return "<tr><td>" + formatDateTime(c.fechaApertura) + "</td><td>" +
         formatDateTime(c.fechaCierre) + "</td><td>" + formatMoney(c.montoInicial) +
@@ -1381,23 +1446,55 @@
 
   safeOn("btnAbrirCaja", "click", function () {
     if (!ensureDb()) return;
-    const abierta = state.cajas.find(function (c) { return c.abierta; });
-    if (abierta) { toast("Ya hay caja abierta", "warning"); return; }
+    if (state.cajaActual && isCajaAbierta(state.cajaActual)) {
+      toast("Ya hay caja abierta", "warning");
+      return;
+    }
+    $("formAperturaCaja").reset();
+    $("cajaMontoInicial").value = "0";
+    $("cajaObservacion").value = "";
+    openModal("modalAperturaCaja");
+    setTimeout(function () {
+      var monto = $("cajaMontoInicial");
+      if (monto) monto.focus();
+    }, 50);
+  });
+
+  safeOn("formAperturaCaja", "submit", function (e) {
+    e.preventDefault();
+    if (!ensureDb()) return;
+    if (state.cajaActual && isCajaAbierta(state.cajaActual)) {
+      toast("Ya hay caja abierta", "warning");
+      return;
+    }
     const monto = parseFloat($("cajaMontoInicial").value) || 0;
+    const observacion = ($("cajaObservacion").value || "").trim();
+    const usuario = nombreUsuarioCaja();
+    const descMov = observacion ? "Apertura de caja: " + observacion : "Apertura de caja";
+
     db.collection(COL.caja).add({
       montoInicial: monto,
       abierta: true,
+      estado: "abierta",
       fechaApertura: firebase.firestore.FieldValue.serverTimestamp(),
+      usuarioApertura: usuario,
+      observacion: observacion,
       totalVentas: 0
     }).then(function (ref) {
-      db.collection(COL.movimientosCaja).add({
+      return db.collection(COL.movimientosCaja).add({
         tipo: "apertura",
         monto: monto,
-        descripcion: "Apertura de caja",
+        descripcion: descMov,
+        observacion: observacion,
+        usuario: usuario,
         cajaId: ref.id,
         fecha: firebase.firestore.FieldValue.serverTimestamp()
-      });
+      }).then(function () { return ref; });
+    }).then(function () {
       toast("Caja abierta", "success");
+      closeModal("modalAperturaCaja");
+    }).catch(function (err) {
+      toast("Error al abrir caja: " + err.message, "error");
     });
   });
 
@@ -1476,10 +1573,12 @@
 
     db.collection(COL.caja).doc(caja.id).update({
       abierta: false,
+      estado: "cerrada",
       montoCierre: contado,
       efectivoEsperado: esperado,
       diferencia: contado - esperado,
       totalVentas: ventasCaja,
+      usuarioCierre: nombreUsuarioCaja(),
       fechaCierre: firebase.firestore.FieldValue.serverTimestamp()
     }).then(function () {
       db.collection(COL.movimientosCaja).add({
