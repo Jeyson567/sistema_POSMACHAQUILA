@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userData() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return signedIn() && userData().role == 'admin';
+    }
+
+    function isEmpleado() {
+      return signedIn() && userData().role == 'empleado';
+    }
+
+    function isStaff() {
+      return isAdmin() || isEmpleado();
+    }
+
+    function staffActive() {
+      return isStaff() && userData().activo != false;
+    }
+
+    match /usuarios/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /productos/{docId} {
+      allow read: if staffActive();
+      allow create, delete: if isAdmin();
+      allow update: if staffActive();
+    }
+
+    match /clientes/{docId} {
+      allow read: if staffActive();
+      allow create, delete: if isAdmin();
+      allow update: if staffActive();
+    }
+
+    match /cotizaciones/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /ventas/{docId} {
+      allow read, write: if staffActive();
+    }
+
+    match /tickets/{docId} {
+      allow read, write: if staffActive();
+    }
+
+    match /caja/{docId} {
+      allow read, write: if staffActive();
+    }
+
+    match /gastos/{docId} {
+      allow read, write: if staffActive();
+    }
+
+    match /movimientosCaja/{docId} {
+      allow read, write: if staffActive();
+    }
+
+    match /config/{docId} {
+      allow read: if staffActive();
+      allow write: if isAdmin();
+    }
+
+    match /_ids/{docId} {
+      allow read, write: if staffActive();
+    }
+  }
+}

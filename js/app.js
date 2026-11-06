@@ -17,8 +17,20 @@
     cotEditId: null,
     ticketCounter: 0,
     cotCounter: 0,
-    listeners: []
+    listeners: [],
+    ticketsHistorialCompleto: false,
+    ticketsCargando: false,
+    ticketPagina: 0,
+    detalleActual: null,
+    cancelacionObjetivoId: null,
+    cancelaciones: []
   };
+
+  var guardiaCobro = crearGuardiaOperacion();
+  var guardiaCancelacion = crearGuardiaOperacion();
+  var guardiaApertura = crearGuardiaOperacion();
+  var guardiaMovimiento = crearGuardiaOperacion();
+  var guardiaCierre = crearGuardiaOperacion();
 
   var firebaseConnectTimeout = null;
   const STOCK_BAJO = 5;
@@ -56,7 +68,7 @@
     else console.warn("[POS] Elemento no encontrado #" + id);
   }
 
-  var VISTAS_IDS = ["dashboard", "contable", "ventas", "inventario", "clientes", "cotizaciones", "caja"];
+  var VISTAS_IDS = ["dashboard", "contable", "ventas", "inventario", "clientes", "cotizaciones", "caja", "cancelaciones"];
 
   function mostrarVista(id) {
     if (!id) {
@@ -81,6 +93,7 @@
     });
     var sidebar = document.getElementById("sidebar");
     if (sidebar) sidebar.classList.remove("open");
+    if (id === "cancelaciones") cargarCancelaciones();
     console.log("[POS] Vista:", id);
   }
 
@@ -191,6 +204,56 @@
     }
   }
 
+  function aplicarSnapVentas(snap) {
+    state.ventas = [];
+    snap.forEach(function (d) {
+      var v = Object.assign({ id: d.id }, d.data());
+      v.fecha = tsToDate(v.fecha);
+      v.fechaCancelacion = tsToDate(v.fechaCancelacion);
+      state.ventas.push(v);
+    });
+    state.ventas.sort(function (a, b) { return (b.fecha || 0) - (a.fecha || 0); });
+    renderDashboard();
+    renderContable();
+    renderCaja();
+  }
+
+  function listenVentasRecientes() {
+    watchCol("ventas", db.collection(COL.ventas).limit(500), aplicarSnapVentas);
+  }
+
+  function aplicarSnapMovimientos(snap) {
+    var incoming = [];
+    snap.forEach(function (d) {
+      var m = Object.assign({ id: d.id }, d.data());
+      m.fecha = tsToDate(m.fecha);
+      incoming.push(m);
+    });
+    fusionarMovimientos(incoming);
+    renderMovimientos();
+    renderCaja();
+    renderDashboard();
+    renderContable();
+  }
+
+  function listenMovimientosRecientes() {
+    var q = db.collection(COL.movimientosCaja).orderBy("fecha", "desc").limit(300);
+    q.onSnapshot(aplicarSnapMovimientos, function (err) {
+      console.warn("[POS] movimientos por fecha", err);
+      watchCol("movimientos", db.collection(COL.movimientosCaja).limit(200), aplicarSnapMovimientos);
+    });
+  }
+
+  function fusionarMovimientos(lista) {
+    var map = {};
+    state.movimientos.forEach(function (m) { map[m.id] = m; });
+    (lista || []).forEach(function (m) {
+      if (m && m.id) map[m.id] = m;
+    });
+    state.movimientos = Object.keys(map).map(function (id) { return map[id]; });
+    state.movimientos.sort(function (a, b) { return (b.fecha || 0) - (a.fecha || 0); });
+  }
+
   /* ─── Firebase listeners ─── */
   function initListeners() {
     if (!db) {
@@ -217,31 +280,9 @@
       fillClienteSelects();
     });
 
-    watchCol("ventas", db.collection(COL.ventas).limit(500), function (snap) {
-      state.ventas = [];
-      snap.forEach(function (d) {
-        const v = Object.assign({ id: d.id }, d.data());
-        v.fecha = tsToDate(v.fecha);
-        state.ventas.push(v);
-      });
-      state.ventas.sort(function (a, b) { return (b.fecha || 0) - (a.fecha || 0); });
-      renderDashboard();
-      renderContable();
-    });
-
-    watchCol("tickets", db.collection(COL.tickets).limit(200), function (snap) {
-      state.tickets = [];
-      snap.forEach(function (d) {
-        const t = Object.assign({ id: d.id }, d.data());
-        t.fecha = tsToDate(t.fecha);
-        state.tickets.push(t);
-      });
-      var max = 0;
-      state.tickets.forEach(function (t) { if (t.numero > max) max = t.numero; });
-      state.ticketCounter = max;
-      state.tickets.sort(function (a, b) { return (b.numero || 0) - (a.numero || 0); });
-      renderTicketsList();
-    });
+    listenVentasRecientes();
+    listenTicketsRecientes();
+    cargarTodosLosTickets();
 
     watchCol("cotizaciones", db.collection(COL.cotizaciones), function (snap) {
       state.cotizaciones = [];
@@ -297,18 +338,7 @@
       renderCaja();
     });
 
-    watchCol("movimientos", db.collection(COL.movimientosCaja).limit(200), function (snap) {
-      state.movimientos = [];
-      snap.forEach(function (d) {
-        const m = Object.assign({ id: d.id }, d.data());
-        m.fecha = tsToDate(m.fecha);
-        state.movimientos.push(m);
-      });
-      renderMovimientos();
-      renderCaja();
-      renderDashboard();
-      renderContable();
-    });
+    listenMovimientosRecientes();
   }
 
   function ensureDb() {
@@ -330,6 +360,7 @@
     const prodCount = {};
 
     vh.forEach(function (v) {
+      if (!ventaCuentaEnTotales(v)) return;
       ventasTotal += v.total || 0;
       (v.items || []).forEach(function (it) {
         const qty = it.cantidad || 0;
@@ -350,7 +381,9 @@
     const gastosHoy = state.gastos.filter(function (g) { return isToday(g.fecha); })
       .reduce(function (s, g) { return s + (g.monto || 0); }, 0);
 
-    const ticketsHoy = state.tickets.filter(function (t) { return isToday(t.fecha); }).length;
+    const ticketsHoy = state.tickets.filter(function (t) {
+      return isToday(t.fecha) && !ventaEstaCancelada(t);
+    }).length;
 
     let efectivo = 0;
     if (state.cajaActual && isCajaAbierta(state.cajaActual)) {
@@ -384,6 +417,7 @@
     const apertura = caja.fechaApertura;
 
     state.ventas.forEach(function (v) {
+      if (!ventaCuentaEnTotales(v)) return;
       if (v.cajaId === cajaId && v.tipoPago === "efectivo" && v.fecha >= apertura) {
         total += v.total || 0;
       }
@@ -391,6 +425,7 @@
 
     state.movimientos.forEach(function (m) {
       if (m.cajaId === cajaId && m.fecha >= apertura) {
+        if (m.tipo === "cancelacion" || m.esReversion) return;
         if (m.tipo === "gasto" || m.tipo === "retiro") total -= m.monto || 0;
         if (m.tipo === "ingreso") total += m.monto || 0;
       }
@@ -406,11 +441,13 @@
     const apertura = caja.fechaApertura;
     res.inicial = caja.montoInicial || 0;
     state.ventas.forEach(function (v) {
+      if (!ventaCuentaEnTotales(v)) return;
       if (v.cajaId === cajaId && v.fecha >= apertura) {
         res.ventas += v.total || 0;
       }
     });
     state.movimientos.forEach(function (m) {
+      if (m.tipo === "cancelacion" || m.esReversion) return;
       if (m.cajaId === cajaId && m.fecha >= apertura) {
         if (m.tipo === "gasto") res.gastos += m.monto || 0;
         if (m.tipo === "retiro") res.retiros += m.monto || 0;
@@ -590,6 +627,51 @@
       btn.addEventListener("click", function () { deleteProducto(btn.getAttribute("data-del-prod")); });
     });
   }
+
+  function celdaExportacion(valor) {
+    if (valor === undefined || valor === null || valor === "") return "";
+    return valor;
+  }
+
+  function fechaRegistroProducto(p) {
+    var raw = p.createdAt || p.fechaRegistro || p.fechaCreacion || null;
+    if (!raw) return "";
+    var dt = tsToDate(raw);
+    return dt ? formatDateTime(dt) : "";
+  }
+
+  safeOn("btnDescargarInventario", "click", function () {
+    if (!state.productos.length) {
+      toast("El inventario todavía no está cargado. Espere la conexión y vuelva a intentar.", "warning");
+      return;
+    }
+    if (typeof XLSX === "undefined") {
+      toast("No se pudo preparar el Excel. Revise la conexión e intente de nuevo.", "error");
+      return;
+    }
+    var filas = state.productos.map(function (p) {
+      var unidad = p.unidadMedida != null ? p.unidadMedida : p.unidad;
+      return {
+        "Código": celdaExportacion(p.codigoBarras),
+        "Nombre": celdaExportacion(p.nombre),
+        "Categoría": celdaExportacion(p.categoria),
+        "Descripción": celdaExportacion(p.descripcion),
+        "Precio de compra": celdaExportacion(p.precioCosto),
+        "Precio de venta": celdaExportacion(p.precioVenta),
+        "Existencias": p.stock != null ? p.stock : "",
+        "Unidad de medida": celdaExportacion(unidad),
+        "Estado": celdaExportacion(p.estado),
+        "Fecha de registro": fechaRegistroProducto(p)
+      };
+    });
+    var hoja = XLSX.utils.json_to_sheet(filas);
+    var libro = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libro, hoja, "Inventario");
+    var fecha = isoFechaLocal(new Date());
+    var nombre = "Inventario_Ferreteria_" + fecha + ".xlsx";
+    XLSX.writeFile(libro, nombre);
+    toast("Inventario descargado: " + filas.length + " productos. " + nombre, "success");
+  });
 
   safeOn("btnNuevoProducto", "click", function () {
     productoFormAllowSubmit = false;
@@ -825,9 +907,39 @@
     renderCarrito();
   });
 
+  function isoFechaLocal(d) {
+    if (!d) return "";
+    var dt = d instanceof Date ? d : tsToDate(d);
+    if (!dt || isNaN(dt.getTime())) return "";
+    var mes = String(dt.getMonth() + 1).padStart(2, "0");
+    var dia = String(dt.getDate()).padStart(2, "0");
+    return dt.getFullYear() + "-" + mes + "-" + dia;
+  }
+
+  function obtenerMaxNumeroTicket() {
+    var maxN = state.ticketCounter || 0;
+    return db.collection(COL.tickets).orderBy("numero", "desc").limit(1).get().then(function (snap) {
+      snap.forEach(function (d) {
+        var n = Number(d.data().numero);
+        if (!isNaN(n) && n > maxN) maxN = n;
+      });
+      return maxN;
+    }).catch(function (err) {
+      console.warn("[POS] No se pudo leer el último ticket", err);
+      return maxN;
+    });
+  }
+
   safeOn("btnCobrar", "click", cobrarVenta);
 
   async function cobrarVenta() {
+    if (!guardiaCobro.intentar()) {
+      toast("La venta ya se está procesando", "warning");
+      return;
+    }
+    var btnCobro = $("btnCobrar");
+    var carritoPrevio = null;
+    try {
     if (!ensureDb()) return;
     if (!state.carrito.length) {
       toast("Carrito vacío", "warning");
@@ -839,6 +951,10 @@
     }
     for (var i = 0; i < state.carrito.length; i++) {
       var it = state.carrito[i];
+      if (!it.productoId) {
+        toast("Hay un producto sin identificador. La venta no se registró.", "error");
+        return;
+      }
       if (it.precioUnitario < (it.precioMinimo || 0)) {
         toast("Precio de " + it.nombre + " menor al mínimo", "error");
         return;
@@ -877,90 +993,159 @@
       };
     });
 
-    const efectivoRecibido = tipoPago === "efectivo" ? parseFloat($("posEfectivo").value) || 0 : 0;
-    const vuelto = tipoPago === "efectivo" ? Math.max(0, efectivoRecibido - total) : 0;
-    const numeroTicket = state.ticketCounter + 1;
+    var efectivoRecibido = tipoPago === "efectivo" ? parseFloat($("posEfectivo").value) || 0 : 0;
+    var vuelto = tipoPago === "efectivo" ? Math.max(0, efectivoRecibido - total) : 0;
+    var cajaId = state.cajaActual.id;
+    var cajero = nombreUsuarioCaja();
+    var opId = genId();
+    var clienteNombre = clienteId ? nombreCliente(clienteId) : "Contado";
+    var preparado = prepararItemsVenta(items);
+    var lineasStock = preparado.lineasStock;
+    if (!lineasStock.length) {
+      toast("No hay productos válidos para descontar", "error");
+      return;
+    }
 
-    try {
-      const batch = db.batch();
-      const ventaRef = db.collection(COL.ventas).doc();
-      const ventaData = {
-        items: items,
-        subtotal: total,
-        total: total,
-        tipoPago: tipoPago,
-        clienteId: clienteId,
-        efectivoRecibido: efectivoRecibido,
-        vuelto: vuelto,
-        cajaId: state.cajaActual.id,
-        fecha: firebase.firestore.FieldValue.serverTimestamp(),
-        numeroTicket: numeroTicket
-      };
-      batch.set(ventaRef, ventaData);
+    if (btnCobro) {
+      btnCobro.disabled = true;
+      btnCobro.textContent = "Procesando...";
+    }
+    carritoPrevio = state.carrito.map(function (row) { return Object.assign({}, row); });
+    state.carrito = [];
+    renderCarrito();
 
-      const ticketRef = db.collection(COL.tickets).doc();
-      batch.set(ticketRef, {
-        ventaId: ventaRef.id,
-        numero: numeroTicket,
-        items: items,
-        total: total,
-        tipoPago: tipoPago,
-        clienteId: clienteId,
-        clienteNombre: clienteId ? nombreCliente(clienteId) : "Contado",
-        efectivoRecibido: efectivoRecibido,
-        vuelto: vuelto,
-        fecha: firebase.firestore.FieldValue.serverTimestamp()
+    var maxNumero = await obtenerMaxNumeroTicket();
+    var resultado = await db.runTransaction(function (tx) {
+      var ventaRef = db.collection(COL.ventas).doc(opId);
+      var ticketRef = db.collection(COL.tickets).doc(opId);
+      var seqRef = db.collection("_ids").doc("ticketSequence");
+      var cajaRef = db.collection(COL.caja).doc(cajaId);
+      var movRef = db.collection(COL.movimientosCaja).doc(opId);
+      var cliRef = clienteId ? db.collection(COL.clientes).doc(clienteId) : null;
+      var prodRefs = lineasStock.map(function (l) {
+        return db.collection(COL.productos).doc(l.productoId);
       });
 
-      if (tipoPago === "efectivo") {
-        const movRef = db.collection(COL.movimientosCaja).doc();
-        batch.set(movRef, {
-          tipo: "venta",
-          monto: total,
-          descripcion: "Venta #" + numeroTicket,
-          cajaId: state.cajaActual.id,
-          ventaId: ventaRef.id,
-          fecha: firebase.firestore.FieldValue.serverTimestamp()
+      return tx.get(ventaRef).then(function (ventaSnap) {
+        return tx.get(seqRef).then(function (seqSnap) {
+          return tx.get(cajaRef).then(function (cajaSnap) {
+            var lecturas = prodRefs.map(function (ref) { return tx.get(ref); });
+            if (cliRef) lecturas.push(tx.get(cliRef));
+            return Promise.all(lecturas).then(function (snaps) {
+              var prodSnaps = snaps.slice(0, prodRefs.length);
+              var cliSnap = cliRef ? snaps[snaps.length - 1] : null;
+              if (ventaSnap.exists) {
+                var previa = ventaSnap.data() || {};
+                return { repetida: true, numero: previa.numeroTicket };
+              }
+              if (!cajaSnap.exists || !isCajaAbierta(cajaSnap.data())) {
+                throw new Error("La caja se cerró. La venta no se registró.");
+              }
+              for (var s = 0; s < prodSnaps.length; s++) {
+                if (!prodSnaps[s].exists) {
+                  throw new Error("No se encontró el producto " + lineasStock[s].nombre + ". La venta no se registró.");
+                }
+                var stockSrv = Number(prodSnaps[s].data().stock) || 0;
+                if (stockSrv < lineasStock[s].cantidad) {
+                  throw new Error("Stock insuficiente: " + lineasStock[s].nombre + ". La venta no se registró.");
+                }
+              }
+              if (tipoPago === "fiado" && (!cliSnap || !cliSnap.exists)) {
+                throw new Error("El cliente no existe. La venta no se registró.");
+              }
+              var baseSeq = seqSnap.exists ? Number(seqSnap.data().valor) || 0 : 0;
+              var numeroTicket = siguienteNumeroTicket(baseSeq, maxNumero);
+              if (seqSnap.exists) tx.update(seqRef, { valor: numeroTicket });
+              else tx.set(seqRef, { valor: numeroTicket });
+              for (var u = 0; u < prodRefs.length; u++) {
+                tx.update(prodRefs[u], {
+                  stock: firebase.firestore.FieldValue.increment(-lineasStock[u].cantidad)
+                });
+              }
+              tx.set(ventaRef, {
+                items: items,
+                subtotal: total,
+                total: total,
+                tipoPago: tipoPago,
+                clienteId: clienteId,
+                efectivoRecibido: efectivoRecibido,
+                vuelto: vuelto,
+                cajaId: cajaId,
+                fecha: firebase.firestore.FieldValue.serverTimestamp(),
+                numeroTicket: numeroTicket,
+                operacionId: opId,
+                estado: "ACTIVA",
+                cajeroNombre: cajero
+              });
+              tx.set(ticketRef, {
+                ventaId: ventaRef.id,
+                numero: numeroTicket,
+                items: items,
+                total: total,
+                tipoPago: tipoPago,
+                clienteId: clienteId,
+                clienteNombre: clienteNombre,
+                efectivoRecibido: efectivoRecibido,
+                vuelto: vuelto,
+                fecha: firebase.firestore.FieldValue.serverTimestamp(),
+                operacionId: opId,
+                estado: "ACTIVA",
+                cajeroNombre: cajero
+              });
+              if (tipoPago === "efectivo") {
+                tx.set(movRef, {
+                  tipo: "venta",
+                  monto: total,
+                  descripcion: "Venta #" + numeroTicket,
+                  cajaId: cajaId,
+                  ventaId: ventaRef.id,
+                  operacionId: opId,
+                  fecha: firebase.firestore.FieldValue.serverTimestamp()
+                });
+              }
+              if (tipoPago === "fiado" && cliRef) {
+                tx.update(cliRef, {
+                  saldoPendiente: firebase.firestore.FieldValue.increment(total)
+                });
+              }
+              return { repetida: false, numero: numeroTicket };
+            });
+          });
         });
-      }
-
-      if (tipoPago === "fiado" && clienteId) {
-        const cli = getCliente(clienteId);
-        if (cli) {
-          batch.update(db.collection(COL.clientes).doc(clienteId), {
-            saldoPendiente: (cli.saldoPendiente || 0) + total
-          });
-        }
-      }
-
-      state.carrito.forEach(function (it) {
-        const p = getProducto(it.productoId);
-        if (p) {
-          batch.update(db.collection(COL.productos).doc(it.productoId), {
-            stock: Math.max(0, (p.stock || 0) - it.cantidad)
-          });
-        }
       });
+    });
 
-      await batch.commit();
-
+    carritoPrevio = null;
+    try {
       imprimirTicket({
-        numero: numeroTicket,
+        numero: resultado.numero,
         items: items,
         total: total,
         tipoPago: tipoPago,
-        clienteNombre: clienteId ? nombreCliente(clienteId) : "Contado",
+        clienteNombre: clienteNombre,
         efectivoRecibido: efectivoRecibido,
         vuelto: vuelto,
-        fecha: new Date()
+        fecha: new Date(),
+        cajeroNombre: cajero
       });
-
-      state.carrito = [];
-      $("posEfectivo").value = "";
-      renderCarrito();
-      toast("Venta registrada #" + numeroTicket, "success");
+    } catch (printErr) {
+      console.error("[POS] impresión", printErr);
+    }
+    if ($("posEfectivo")) $("posEfectivo").value = "";
+    renderCarrito();
+    toast((resultado.repetida ? "Venta ya registrada #" : "Venta registrada #") + resultado.numero, "success");
     } catch (err) {
-      toast("Error al cobrar: " + err.message, "error");
+      if (carritoPrevio) {
+        state.carrito = carritoPrevio;
+        renderCarrito();
+      }
+      toast("Error al cobrar: " + (err && err.message ? err.message : err), "error");
+    } finally {
+      guardiaCobro.liberar();
+      if (btnCobro) {
+        btnCobro.disabled = false;
+        btnCobro.textContent = "Cobrar venta";
+      }
     }
   }
 
@@ -1062,37 +1247,220 @@
     }, 800);
   }
 
-  safeOn("btnBuscarTickets", "click", function () {
+  var buscarTicketTimer = null;
+
+  function fusionarTickets(lista) {
+    var map = {};
+    state.tickets.forEach(function (t) { map[t.id] = t; });
+    (lista || []).forEach(function (t) {
+      if (t && t.id) map[t.id] = t;
+    });
+    state.tickets = Object.keys(map).map(function (id) { return map[id]; });
+    state.tickets.sort(function (a, b) {
+      var nb = Number(b.numero) || 0;
+      var na = Number(a.numero) || 0;
+      if (nb !== na) return nb - na;
+      var fb = b.fecha ? b.fecha.getTime() : 0;
+      var fa = a.fecha ? a.fecha.getTime() : 0;
+      return fb - fa;
+    });
+    state.tickets.forEach(function (t) {
+      var n = Number(t.numero);
+      if (!isNaN(n) && n > state.ticketCounter) state.ticketCounter = n;
+    });
+  }
+
+  function onTicketsSnap(snap) {
+    var incoming = [];
+    snap.forEach(function (d) {
+      var t = Object.assign({ id: d.id }, d.data());
+      t.fecha = tsToDate(t.fecha);
+      incoming.push(t);
+    });
+    fusionarTickets(incoming);
     renderTicketsList();
-    openModal("modalTickets");
-  });
+  }
 
-  safeOn("ticketBuscar", "input", renderTicketsList);
+  function listenTicketsRecientes() {
+    var q = db.collection(COL.tickets).orderBy("fecha", "desc").limit(100);
+    q.onSnapshot(onTicketsSnap, function (err) {
+      console.warn("[POS] tickets recientes", err);
+      watchCol("tickets", db.collection(COL.tickets).limit(200), onTicketsSnap);
+    });
+  }
 
-  function renderTicketsList() {
-    const q = ($("ticketBuscar") && $("ticketBuscar").value || "").toLowerCase();
-    let list = state.tickets.slice();
-    if (q) {
-      list = list.filter(function (t) {
-        return String(t.numero).indexOf(q) >= 0 ||
-          formatDateTime(t.fecha).toLowerCase().indexOf(q) >= 0;
+  function cargarTodosLosTickets() {
+    if (!db || state.ticketsCargando || state.ticketsHistorialCompleto) return Promise.resolve();
+    state.ticketsCargando = true;
+    pintarEstadoTickets();
+    var last = null;
+    var paginas = 0;
+    function paso() {
+      var q = db.collection(COL.tickets).orderBy(firebase.firestore.FieldPath.documentId()).limit(400);
+      if (last) q = q.startAfter(last);
+      return q.get().then(function (snap) {
+        paginas += 1;
+        var batch = [];
+        snap.forEach(function (d) {
+          var t = Object.assign({ id: d.id }, d.data());
+          t.fecha = tsToDate(t.fecha);
+          batch.push(t);
+          last = d;
+        });
+        if (batch.length) fusionarTickets(batch);
+        renderTicketsList();
+        if (snap.size < 400 || paginas >= 200) {
+          if (snap.size >= 400) {
+            toast("El historial es muy grande. Use número, fecha o importe para localizar el resto.", "warning");
+          } else {
+            state.ticketsHistorialCompleto = true;
+          }
+          return;
+        }
+        return paso();
       });
     }
-    list = list.slice(0, 50);
-    const tbody = $("ticketsListBody");
-    if (!list.length) {
-      tbody.innerHTML = '<tr><td colspan="4">Sin tickets</td></tr>';
+    return paso().catch(function (err) {
+      console.error("[POS] historial tickets", err);
+      toast("No se pudo cargar todo el historial: " + (err.message || err), "error");
+    }).then(function () {
+      state.ticketsCargando = false;
+      pintarEstadoTickets();
+      renderTicketsList();
+    });
+  }
+
+  function pintarEstadoTickets(filtrados) {
+    var el = $("ticketsHistorialEstado");
+    if (!el) return;
+    var total = state.tickets.length;
+    var extra = typeof filtrados === "number" ? " · coincidencias: " + filtrados : "";
+    if (state.ticketsCargando) el.textContent = "Cargando historial completo… " + total + " tickets leídos" + extra;
+    else if (state.ticketsHistorialCompleto) el.textContent = "Historial completo: " + total + " tickets" + extra;
+    else el.textContent = "Historial parcial: " + total + " tickets. La búsqueda también consulta Firebase." + extra;
+  }
+
+  function ticketPasaFiltros(t) {
+    var general = ($("ticketBuscar") && $("ticketBuscar").value || "").trim().toLowerCase();
+    var num = ($("ticketBuscarNumero") && $("ticketBuscarNumero").value || "").trim().toLowerCase();
+    var fecha = ($("ticketBuscarFecha") && $("ticketBuscarFecha").value) || "";
+    var importeRaw = ($("ticketBuscarImporte") && $("ticketBuscarImporte").value || "").trim();
+    if (general) {
+      var blob = (String(t.numero) + " " + formatDateTime(t.fecha) + " " + formatDate(t.fecha) + " " + formatMoney(t.total)).toLowerCase();
+      if (blob.indexOf(general) < 0) return false;
+    }
+    if (num && String(t.numero).toLowerCase().indexOf(num) < 0) return false;
+    if (fecha && isoFechaLocal(t.fecha) !== fecha) return false;
+    if (importeRaw !== "") {
+      var esperado = Number(String(importeRaw).replace(",", "."));
+      if (!isNaN(esperado) && Math.abs((Number(t.total) || 0) - esperado) > 0.009) return false;
+    }
+    return true;
+  }
+
+  function programarBusquedaServidor() {
+    if (buscarTicketTimer) clearTimeout(buscarTicketTimer);
+    buscarTicketTimer = setTimeout(buscarTicketsEnServidor, 400);
+  }
+
+  function buscarTicketsEnServidor() {
+    if (!db) return;
+    var jobs = [];
+    var numRaw = ($("ticketBuscarNumero") && $("ticketBuscarNumero").value || "").trim();
+    if (/^\d+$/.test(numRaw)) {
+      jobs.push(db.collection(COL.tickets).where("numero", "==", Number(numRaw)).get());
+    }
+    var impRaw = ($("ticketBuscarImporte") && $("ticketBuscarImporte").value || "").trim();
+    if (impRaw !== "" && !isNaN(Number(impRaw))) {
+      jobs.push(db.collection(COL.tickets).where("total", "==", Number(impRaw)).get());
+    }
+    var fecha = ($("ticketBuscarFecha") && $("ticketBuscarFecha").value) || "";
+    if (fecha) {
+      var partes = fecha.split("-");
+      var desde = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]), 0, 0, 0, 0);
+      var hasta = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]), 23, 59, 59, 999);
+      jobs.push(db.collection(COL.tickets).where("fecha", ">=", desde).where("fecha", "<=", hasta).get());
+    }
+    if (!jobs.length) return;
+    Promise.all(jobs).then(function (snaps) {
+      var incoming = [];
+      snaps.forEach(function (snap) {
+        snap.forEach(function (d) {
+          var t = Object.assign({ id: d.id }, d.data());
+          t.fecha = tsToDate(t.fecha);
+          incoming.push(t);
+        });
+      });
+      if (incoming.length) fusionarTickets(incoming);
+      renderTicketsList();
+    }).catch(function (err) {
+      console.warn("[POS] búsqueda de tickets", err);
+    });
+  }
+
+  function alCambiarFiltroTickets() {
+    state.ticketPagina = 0;
+    renderTicketsList();
+    programarBusquedaServidor();
+  }
+
+  safeOn("btnBuscarTickets", "click", function () {
+    state.ticketPagina = 0;
+    renderTicketsList();
+    openModal("modalTickets");
+    cargarTodosLosTickets();
+  });
+  safeOn("ticketBuscar", "input", alCambiarFiltroTickets);
+  safeOn("ticketBuscarNumero", "input", alCambiarFiltroTickets);
+  safeOn("ticketBuscarFecha", "change", alCambiarFiltroTickets);
+  safeOn("ticketBuscarImporte", "input", alCambiarFiltroTickets);
+  safeOn("ticketPaginaPrev", "click", function () {
+    if (state.ticketPagina > 0) state.ticketPagina -= 1;
+    renderTicketsList();
+  });
+  safeOn("ticketPaginaNext", "click", function () {
+    state.ticketPagina += 1;
+    renderTicketsList();
+  });
+
+  function renderTicketsList() {
+    var tbody = $("ticketsListBody");
+    if (!tbody) return;
+    var list = state.tickets.filter(ticketPasaFiltros);
+    var pageSize = 100;
+    var pages = Math.max(1, Math.ceil(list.length / pageSize));
+    if (state.ticketPagina >= pages) state.ticketPagina = pages - 1;
+    if (state.ticketPagina < 0) state.ticketPagina = 0;
+    var start = state.ticketPagina * pageSize;
+    var slice = list.slice(start, start + pageSize);
+    pintarEstadoTickets(list.length);
+    var info = $("ticketPaginaInfo");
+    if (info) {
+      info.textContent = list.length
+        ? ("Mostrando " + (start + 1) + "-" + (start + slice.length) + " de " + list.length)
+        : "Sin resultados";
+    }
+    if (!slice.length) {
+      tbody.innerHTML = '<tr><td colspan="5">Sin tickets</td></tr>';
       return;
     }
-    tbody.innerHTML = list.map(function (t) {
-      return "<tr><td>#" + t.numero + "</td><td>" + formatDateTime(t.fecha) +
-        "</td><td>" + formatMoney(t.total) +
-        "</td><td><button class='btn btn-sm btn-secondary' data-reprint='" + t.id + "'>Reimprimir</button></td></tr>";
+    tbody.innerHTML = slice.map(function (t) {
+      var estado = ventaEstaCancelada(t) ? "Cancelada" : "Activa";
+      return "<tr><td>#" + escapeHtml(String(t.numero != null ? t.numero : "")) + "</td><td>" +
+        formatDateTime(t.fecha) + "</td><td>" + formatMoney(t.total) + "</td><td>" + estado +
+        "</td><td><button type='button' class='btn btn-sm btn-secondary' data-ver-ticket='" + t.id +
+        "'>Detalle</button> <button type='button' class='btn btn-sm btn-secondary' data-reprint='" +
+        t.id + "'>Reimprimir</button></td></tr>";
     }).join("");
     tbody.querySelectorAll("[data-reprint]").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        const t = state.tickets.find(function (x) { return x.id === btn.getAttribute("data-reprint"); });
+        var t = state.tickets.find(function (x) { return x.id === btn.getAttribute("data-reprint"); });
         if (t) imprimirTicket(t);
+      });
+    });
+    tbody.querySelectorAll("[data-ver-ticket]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        abrirDetalleTicket(btn.getAttribute("data-ver-ticket"));
       });
     });
   }
@@ -1184,21 +1552,34 @@
     }).catch(function (err) { toast("Error: " + err.message, "error"); });
   });
 
-  function verHistorialCliente(id) {
-    const c = getCliente(id);
-    if (!c) return;
-    $("historialTitulo").textContent = "Historial: " + c.nombre;
-    const ventas = state.ventas.filter(function (v) { return v.clienteId === id; });
-    const tbody = $("historialBody");
+  function pintarHistorialCliente(nombre, ventas) {
+    $("historialTitulo").textContent = "Historial: " + nombre;
+    var tbody = $("historialBody");
     if (!ventas.length) {
       tbody.innerHTML = '<tr><td colspan="4">Sin compras</td></tr>';
     } else {
       tbody.innerHTML = ventas.map(function (v) {
+        var estado = ventaEstaCancelada(v) ? " · cancelada" : "";
         return "<tr><td>" + formatDateTime(v.fecha) + "</td><td>" + formatMoney(v.total) +
-          "</td><td>" + (v.tipoPago || "efectivo") + "</td><td>#" + (v.numeroTicket || "—") + "</td></tr>";
+          "</td><td>" + escapeHtml(v.tipoPago || "efectivo") + estado + "</td><td>#" +
+          escapeHtml(String(v.numeroTicket || "—")) + "</td></tr>";
       }).join("");
     }
     openModal("modalHistorial");
+  }
+
+  function verHistorialCliente(id) {
+    var c = getCliente(id);
+    if (!c) return;
+    var locales = state.ventas.filter(function (v) { return v.clienteId === id; });
+    pintarHistorialCliente(c.nombre, locales);
+    if (!db) return;
+    db.collection(COL.ventas).where("clienteId", "==", id).get().then(function (snap) {
+      var ventas = [];
+      snap.forEach(function (d) { ventas.push(docVenta(d)); });
+      ventas.sort(function (a, b) { return (b.fecha || 0) - (a.fecha || 0); });
+      pintarHistorialCliente(c.nombre, ventas);
+    }).catch(function () { /* la lista local sigue visible */ });
   }
 
   /* ─── COTIZACIONES ─── */
@@ -1432,13 +1813,13 @@
           m.fecha >= state.cajaActual.fechaApertura;
       });
     }
-    movs = movs.slice(0, 50);
     if (!movs.length) {
       tbody.innerHTML = '<tr><td colspan="4">Sin movimientos</td></tr>';
       return;
     }
     tbody.innerHTML = movs.map(function (m) {
-      const sign = (m.tipo === "gasto" || m.tipo === "retiro") ? "-" : "+";
+      var esSalida = m.tipo === "gasto" || m.tipo === "retiro" || (m.tipo === "cancelacion" && (Number(m.monto) || 0) > 0);
+      const sign = esSalida ? "-" : (m.tipo === "cancelacion" ? "" : "+");
       return "<tr><td>" + formatDateTime(m.fecha) + "</td><td>" + m.tipo +
         "</td><td>" + escapeHtml(m.descripcion || "") + "</td><td>" + sign + formatMoney(m.monto) + "</td></tr>";
     }).join("");
@@ -1462,9 +1843,17 @@
 
   safeOn("formAperturaCaja", "submit", function (e) {
     e.preventDefault();
-    if (!ensureDb()) return;
+    if (!guardiaApertura.intentar()) {
+      toast("La apertura ya se está procesando", "warning");
+      return;
+    }
+    if (!ensureDb()) {
+      guardiaApertura.liberar();
+      return;
+    }
     if (state.cajaActual && isCajaAbierta(state.cajaActual)) {
       toast("Ya hay caja abierta", "warning");
+      guardiaApertura.liberar();
       return;
     }
     const monto = parseFloat($("cajaMontoInicial").value) || 0;
@@ -1495,6 +1884,8 @@
       closeModal("modalAperturaCaja");
     }).catch(function (err) {
       toast("Error al abrir caja: " + err.message, "error");
+    }).then(function () {
+      guardiaApertura.liberar();
     });
   });
 
@@ -1516,7 +1907,14 @@
 
   safeOn("formMovimiento", "submit", function (e) {
     e.preventDefault();
-    if (!state.cajaActual) return;
+    if (!guardiaMovimiento.intentar()) {
+      toast("El movimiento ya se está procesando", "warning");
+      return;
+    }
+    if (!state.cajaActual) {
+      guardiaMovimiento.liberar();
+      return;
+    }
     const tipo = $("movTipo").value;
     const monto = parseFloat($("movMonto").value) || 0;
     const desc = $("movDescripcion").value.trim();
@@ -1541,6 +1939,10 @@
     batch.commit().then(function () {
       toast("Movimiento registrado", "success");
       closeModal("modalMovimiento");
+    }).catch(function (err) {
+      toast("Error al registrar: " + (err.message || err), "error");
+    }).then(function () {
+      guardiaMovimiento.liberar();
     });
   });
 
@@ -1563,12 +1965,19 @@
 
   safeOn("formCierre", "submit", function (e) {
     e.preventDefault();
-    if (!state.cajaActual) return;
+    if (!guardiaCierre.intentar()) {
+      toast("El cierre ya se está procesando", "warning");
+      return;
+    }
+    if (!state.cajaActual) {
+      guardiaCierre.liberar();
+      return;
+    }
     const caja = state.cajaActual;
     const contado = parseFloat($("cierreContado").value) || 0;
     const esperado = calcEfectivoCaja(caja);
     const ventasCaja = state.ventas.filter(function (v) {
-      return v.cajaId === caja.id && v.fecha >= caja.fechaApertura;
+      return ventaCuentaEnTotales(v) && v.cajaId === caja.id && v.fecha >= caja.fechaApertura;
     }).reduce(function (s, v) { return s + (v.total || 0); }, 0);
 
     db.collection(COL.caja).doc(caja.id).update({
@@ -1590,8 +1999,476 @@
       });
       toast("Caja cerrada", "success");
       closeModal("modalCierre");
+    }).catch(function (err) {
+      toast("Error al cerrar caja: " + (err.message || err), "error");
+    }).then(function () {
+      guardiaCierre.liberar();
     });
   });
+
+  function usuarioActual() {
+    return {
+      nombre: nombreUsuarioCaja(),
+      uid: typeof window.posGetUid === "function" ? window.posGetUid() : ""
+    };
+  }
+
+  function docVenta(d) {
+    var v = Object.assign({ id: d.id }, d.data());
+    v.fecha = tsToDate(v.fecha);
+    v.fechaCancelacion = tsToDate(v.fechaCancelacion);
+    return v;
+  }
+
+  function idsUnicos(lista) {
+    var visto = {};
+    var out = [];
+    (lista || []).forEach(function (id) {
+      if (!id || visto[id]) return;
+      visto[id] = true;
+      out.push(id);
+    });
+    return out;
+  }
+
+  function cargarPaqueteVenta(ventaId) {
+    return db.collection(COL.ventas).doc(ventaId).get().then(function (snap) {
+      if (!snap.exists) throw new Error("Venta no encontrada. No se modificó nada.");
+      var venta = docVenta(snap);
+      var otrasP = (venta.numeroTicket != null && venta.numeroTicket !== "")
+        ? db.collection(COL.ventas).where("numeroTicket", "==", venta.numeroTicket).get()
+        : Promise.resolve(null);
+      return otrasP.then(function (otrasSnap) {
+        var otras = [];
+        if (otrasSnap) otrasSnap.forEach(function (d) { otras.push(docVenta(d)); });
+        var ids = idsUnicos(otras.map(function (o) { return o.id; }).concat([venta.id]));
+        return Promise.all(ids.map(function (id) {
+          return db.collection(COL.movimientosCaja).where("ventaId", "==", id).get();
+        })).then(function (movSnaps) {
+          var movs = [];
+          movSnaps.forEach(function (s) {
+            s.forEach(function (doc) { movs.push(Object.assign({ id: doc.id }, doc.data())); });
+          });
+          return Promise.all(ids.map(function (id) {
+            return db.collection(COL.tickets).where("ventaId", "==", id).get();
+          })).then(function (ticketSnaps) {
+            var ticketIds = [];
+            ticketSnaps.forEach(function (s) {
+              s.forEach(function (doc) { ticketIds.push(doc.id); });
+            });
+            return { venta: venta, otras: otras, movimientos: movs, ticketIds: idsUnicos(ticketIds.concat(ids)) };
+          });
+        });
+      });
+    });
+  }
+
+  function pintarDetalleVenta() {
+    var body = $("detalleVentaBody");
+    var pack = state.detalleActual;
+    if (!body || !pack) return;
+    var t = pack.ticket || {};
+    var v = pack.venta;
+    var items = (v && v.items && v.items.length) ? v.items : (t.items || []);
+    var cancelada = ventaEstaCancelada(v || t);
+    if ($("detalleVentaTitulo")) {
+      $("detalleVentaTitulo").textContent = "Ticket #" + (t.numero != null ? t.numero : (v && v.numeroTicket != null ? v.numeroTicket : "—"));
+    }
+    var rows = items.map(function (it) {
+      var sub = it.subtotal != null ? it.subtotal : (Number(it.cantidad) || 0) * (Number(it.precioUnitario) || 0);
+      return "<tr><td>" + escapeHtml(it.nombre || "") + "</td><td>" + (it.cantidad || 0) +
+        "</td><td>" + formatMoney(it.precioUnitario) + "</td><td>" + formatMoney(sub) + "</td></tr>";
+    }).join("");
+    var extra = "";
+    if (v && v.motivoCancelacion) extra += "<p><strong>Motivo:</strong> " + escapeHtml(v.motivoCancelacion) + "</p>";
+    if (v && v.usuarioCancelacion) {
+      extra += "<p><strong>Canceló:</strong> " + escapeHtml(v.usuarioCancelacion) +
+        (v.fechaCancelacion ? " · " + formatDateTime(v.fechaCancelacion) : "") + "</p>";
+    }
+    if (v && cancelada && v.devolucionInventario && v.productosDevueltos && v.productosDevueltos.length) {
+      extra += "<p><strong>Devuelto al inventario:</strong></p><ul>" + v.productosDevueltos.map(function (l) {
+        return "<li>" + escapeHtml(l.nombre || l.productoId || "") + " · " + l.cantidad + "</li>";
+      }).join("") + "</ul>";
+    } else if (v && cancelada) {
+      extra += "<p><strong>Inventario:</strong> esta cancelación no volvió a sumar existencias.</p>";
+    }
+    if (v && cancelada && v.tipoPago === "efectivo") {
+      extra += "<p><strong>Caja:</strong> la venta deja de sumar " + formatMoney(v.ajusteCaja != null ? v.ajusteCaja : v.total) +
+        ". El cobro original se conserva. El movimiento de cancelación queda como respaldo y no se resta otra vez.</p>";
+    }
+    if (v && cancelada && v.tipoPago === "fiado") {
+      extra += "<p><strong>Fiado:</strong> el saldo del cliente baja una sola vez cuando esta venta aplicó la devolución.</p>";
+    }
+    if (!v) extra += "<p>No se encontró la venta ligada a este ticket. No se puede cancelar sin ese registro.</p>";
+    body.innerHTML =
+      "<p><strong>Fecha de venta:</strong> " + formatDateTime((v && v.fecha) || t.fecha) + "</p>" +
+      "<p><strong>Total:</strong> " + formatMoney(v && v.total != null ? v.total : t.total) + "</p>" +
+      "<p><strong>Pago:</strong> " + escapeHtml(ticketTipoPagoLabel((v && v.tipoPago) || t.tipoPago)) + "</p>" +
+      "<p><strong>Estado:</strong> " + (cancelada ? "Cancelada" : "Activa") + "</p>" + extra +
+      "<div class='table-wrap'><table class='data-table'><thead><tr><th>Producto</th><th>Cant.</th><th>Precio</th><th>Sub</th></tr></thead><tbody>" +
+      (rows || "<tr><td colspan='4'>Sin productos</td></tr>") + "</tbody></table></div>";
+    var btnCancel = $("btnAbrirCancelarVenta");
+    if (btnCancel) btnCancel.style.display = (v && !cancelada) ? "" : "none";
+  }
+
+  function abrirDetalleTicket(ticketId) {
+    var ticket = state.tickets.find(function (t) { return t.id === ticketId; });
+    if (!ticket || !db) {
+      toast("No se encontró el ticket", "error");
+      return;
+    }
+    state.detalleActual = { ticket: ticket, venta: null, otras: [], movimientos: [] };
+    pintarDetalleVenta();
+    openModal("modalDetalleVenta");
+    var prom = ticket.ventaId
+      ? Promise.resolve(ticket.ventaId)
+      : db.collection(COL.ventas).where("numeroTicket", "==", ticket.numero).limit(1).get().then(function (snap) {
+        var id = null;
+        snap.forEach(function (d) { if (!id) id = d.id; });
+        return id;
+      });
+    prom.then(function (ventaId) {
+      if (!ventaId) return null;
+      return cargarPaqueteVenta(ventaId);
+    }).then(function (pack) {
+      if (!pack) return;
+      pack.ticket = ticket;
+      state.detalleActual = pack;
+      state.cancelacionObjetivoId = pack.venta.id;
+      pintarDetalleVenta();
+    }).catch(function (err) {
+      toast("No se pudo leer la venta: " + (err.message || err), "error");
+    });
+  }
+
+  function abrirModalCancelar() {
+    var pack = state.detalleActual;
+    if (!pack || !pack.venta) {
+      toast("No hay una venta para cancelar", "error");
+      return;
+    }
+    if (ventaEstaCancelada(pack.venta)) {
+      toast("Esta venta ya está cancelada", "warning");
+      return;
+    }
+    state.cancelacionObjetivoId = pack.venta.id;
+    var plan = evaluarCancelacion(pack.venta, pack.otras || [], pack.movimientos || [], {});
+    $("cancelTicketNum").textContent = "#" + (pack.venta.numeroTicket != null ? pack.venta.numeroTicket : "—");
+    $("cancelTicketTotal").textContent = formatMoney(pack.venta.total);
+    $("cancelMotivo").value = "";
+    if ($("cancelConfirmarDuplicado")) $("cancelConfirmarDuplicado").checked = false;
+    var box = $("cancelDuplicadoBox");
+    var aviso = $("cancelAviso");
+    var btn = $("btnConfirmarCancelar");
+    if (plan.codigo === "duplicado") {
+      if (box) box.style.display = "block";
+      if (aviso) aviso.textContent = plan.mensaje + " Si confirma, el inventario se devuelve una sola vez y cada copia deja de sumarse en caja.";
+      if (btn) btn.disabled = false;
+    } else if (!plan.ok) {
+      if (box) box.style.display = "none";
+      if (aviso) aviso.textContent = plan.mensaje;
+      if (btn) btn.disabled = true;
+    } else {
+      if (box) box.style.display = "none";
+      if (aviso) aviso.textContent = "Se conservará el número de ticket. La venta pasará a CANCELADA y el inventario de sus productos volverá una sola vez. Si fue en efectivo, dejará de sumarse en caja. El movimiento original no se borra.";
+      if (btn) btn.disabled = false;
+    }
+    openModal("modalCancelarVenta");
+  }
+
+  function marcarLocalCancelado(ventas, motivo, usuario) {
+    var set = {};
+    ventas.forEach(function (v) { set[v.id] = v; });
+    state.ventas.forEach(function (v) {
+      if (!set[v.id]) return;
+      v.estado = "CANCELADA";
+      v.cancelada = true;
+      v.motivoCancelacion = motivo;
+      v.usuarioCancelacion = usuario;
+      v.fechaCancelacion = new Date();
+      v.ajusteCaja = v.tipoPago === "efectivo" ? (Number(v.total) || 0) : 0;
+    });
+    state.tickets.forEach(function (t) {
+      if (set[t.ventaId] || set[t.id]) {
+        t.estado = "CANCELADA";
+        t.cancelada = true;
+      }
+    });
+    fusionarMovimientos(ventas.map(function (v) {
+      return {
+        id: "cancel_" + v.id,
+        tipo: "cancelacion",
+        esReversion: true,
+        afectaCalculoCaja: false,
+        monto: v.tipoPago === "efectivo" ? (Number(v.total) || 0) : 0,
+        descripcion: "Cancelación ticket #" + (v.numeroTicket != null ? v.numeroTicket : "—"),
+        cajaId: v.cajaId || null,
+        ventaId: v.id,
+        fecha: new Date(),
+        usuario: usuario,
+        motivo: motivo
+      };
+    }));
+    renderTicketsList();
+    renderDashboard();
+    renderContable();
+    renderCaja();
+    renderMovimientos();
+  }
+
+  function ejecutarCancelacion(ventaId, motivo, confirmarDuplicado) {
+    if (!guardiaCancelacion.intentar()) {
+      toast("La cancelación ya se está procesando", "warning");
+      return;
+    }
+    var btn = $("btnConfirmarCancelar");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Procesando...";
+    }
+    var usuario = usuarioActual();
+    var ventasTocadas = [];
+
+    cargarPaqueteVenta(ventaId).then(function (pack) {
+      var plan = evaluarCancelacion(pack.venta, pack.otras, pack.movimientos, { confirmarDuplicado: !!confirmarDuplicado });
+      if (!plan.ok) throw new Error(plan.mensaje);
+      var idsGrupo = idsUnicos((pack.otras || []).map(function (o) { return o.id; }).concat([pack.venta.id]));
+      var ticketIds = idsUnicos(pack.ticketIds || []);
+      var lineas = plan.lineas;
+
+      return db.runTransaction(function (tx) {
+        var ventaRefs = idsGrupo.map(function (id) { return db.collection(COL.ventas).doc(id); });
+        var movRefs = idsGrupo.map(function (id) { return db.collection(COL.movimientosCaja).doc("cancel_" + id); });
+        var prodRefs = lineas.map(function (l) { return db.collection(COL.productos).doc(l.productoId); });
+        var ticketRefs = ticketIds.map(function (id) { return db.collection(COL.tickets).doc(id); });
+        var cliRef = (pack.venta.tipoPago === "fiado" && pack.venta.clienteId)
+          ? db.collection(COL.clientes).doc(pack.venta.clienteId) : null;
+        function leer(refs) { return Promise.all(refs.map(function (ref) { return tx.get(ref); })); }
+
+        return leer(ventaRefs).then(function (ventaSnaps) {
+          return leer(movRefs).then(function (movSnaps) {
+            return leer(prodRefs).then(function (prodSnaps) {
+              return leer(ticketRefs).then(function (ticketSnaps) {
+                return (cliRef ? tx.get(cliRef) : Promise.resolve(null)).then(function (cliSnap) {
+                  var frescas = ventaSnaps.filter(function (s) { return s.exists; }).map(docVenta);
+                  var principal = null;
+                  frescas.forEach(function (v) { if (v.id === ventaId) principal = v; });
+                  if (!principal) throw new Error("La venta ya no está disponible. No se modificó nada.");
+                  var idxPrincipal = idsGrupo.indexOf(principal.id);
+                  var movsPrincipal = (pack.movimientos || []).filter(function (m) { return m.ventaId === principal.id; });
+                  if (idxPrincipal >= 0 && movSnaps[idxPrincipal] && movSnaps[idxPrincipal].exists) {
+                    movsPrincipal.push({ tipo: "cancelacion", esReversion: true, ventaId: principal.id });
+                  }
+                  var plan2 = evaluarCancelacion(principal, frescas, movsPrincipal, { confirmarDuplicado: !!confirmarDuplicado });
+                  if (!plan2.ok) throw new Error(plan2.mensaje);
+                  var devolver = plan2.revertirInventario;
+                  if (devolver) {
+                    for (var i = 0; i < prodSnaps.length; i++) {
+                      if (!prodSnaps[i].exists) {
+                        throw new Error("No se encontró el producto " + lineas[i].nombre + ". No se canceló nada ni se tocó el inventario.");
+                      }
+                    }
+                    if (plan2.tipoPago === "fiado" && (!cliSnap || !cliSnap.exists)) {
+                      throw new Error("No se encontró el cliente del fiado. No se canceló la venta.");
+                    }
+                  }
+                  var activas = {};
+                  plan2.grupo.forEach(function (v) { activas[v.id] = v; });
+                  ventasTocadas = plan2.grupo.slice();
+                  if (devolver) {
+                    for (var j = 0; j < prodRefs.length; j++) {
+                      tx.update(prodRefs[j], { stock: firebase.firestore.FieldValue.increment(lineas[j].cantidad) });
+                    }
+                  }
+                  idsGrupo.forEach(function (id, idx) {
+                    var v = activas[id];
+                    if (!v) return;
+                    if (movSnaps[idx] && movSnaps[idx].exists) {
+                      throw new Error("Ya existe una reversión de esta venta. No se procesó de nuevo.");
+                    }
+                    var aplicaInventario = devolver && id === plan2.principalId;
+                    tx.update(ventaRefs[idx], {
+                      estado: "CANCELADA",
+                      cancelada: true,
+                      fechaCancelacion: firebase.firestore.FieldValue.serverTimestamp(),
+                      usuarioCancelacion: usuario.nombre,
+                      usuarioCancelacionId: usuario.uid,
+                      motivoCancelacion: motivo,
+                      productosDevueltos: aplicaInventario ? lineas : [],
+                      devolucionInventario: aplicaInventario,
+                      ajusteCaja: v.tipoPago === "efectivo" ? (Number(v.total) || 0) : 0,
+                      movimientoCancelacionId: "cancel_" + id,
+                      cancelacionGrupo: Object.keys(activas)
+                    });
+                    tx.set(movRefs[idx], {
+                      tipo: "cancelacion",
+                      esReversion: true,
+                      afectaCalculoCaja: false,
+                      monto: v.tipoPago === "efectivo" ? (Number(v.total) || 0) : 0,
+                      descripcion: "Cancelación ticket #" + (v.numeroTicket != null ? v.numeroTicket : "—") + " — " + motivo,
+                      cajaId: v.cajaId || null,
+                      ventaId: id,
+                      operacionId: "cancel_" + plan2.principalId,
+                      usuario: usuario.nombre,
+                      usuarioId: usuario.uid,
+                      motivo: motivo,
+                      productosDevueltos: aplicaInventario ? lineas : [],
+                      fecha: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                  });
+                  ticketSnaps.forEach(function (tsSnap, tIdx) {
+                    if (!tsSnap.exists) return;
+                    var data = tsSnap.data() || {};
+                    var ligado = data.ventaId || ticketIds[tIdx];
+                    if (!activas[ligado] && !activas[ticketIds[tIdx]]) return;
+                    tx.update(ticketRefs[tIdx], {
+                      estado: "CANCELADA",
+                      cancelada: true,
+                      fechaCancelacion: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                  });
+                  if (devolver && plan2.tipoPago === "fiado" && cliRef) {
+                    tx.update(cliRef, {
+                      saldoPendiente: firebase.firestore.FieldValue.increment(-(Number(principal.total) || 0))
+                    });
+                  }
+                });
+              });
+            });
+          });
+        });
+      });
+    }).then(function () {
+      marcarLocalCancelado(ventasTocadas, motivo, usuario.nombre);
+      toast("Venta cancelada. El ticket original se conservó.", "success");
+      closeModal("modalCancelarVenta");
+      closeModal("modalDetalleVenta");
+      if (document.getElementById("cancelaciones") && document.getElementById("cancelaciones").classList.contains("active")) {
+        cargarCancelaciones();
+      }
+    }).catch(function (err) {
+      toast(err && err.message ? err.message : "No se pudo cancelar", "error");
+    }).then(function () {
+      guardiaCancelacion.liberar();
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "Confirmar cancelación";
+      }
+    });
+  }
+
+  safeOn("btnReimprimirDetalle", "click", function () {
+    var pack = state.detalleActual;
+    var base = pack && (pack.venta || pack.ticket);
+    if (!base) return;
+    imprimirTicket({
+      numero: base.numero != null ? base.numero : base.numeroTicket,
+      items: base.items || [],
+      total: base.total,
+      tipoPago: base.tipoPago,
+      clienteNombre: base.clienteNombre || "",
+      efectivoRecibido: base.efectivoRecibido,
+      vuelto: base.vuelto,
+      fecha: base.fecha,
+      cajeroNombre: base.cajeroNombre
+    });
+  });
+  safeOn("btnAbrirCancelarVenta", "click", abrirModalCancelar);
+  safeOn("formCancelarVenta", "submit", function (e) {
+    e.preventDefault();
+    if (!state.cancelacionObjetivoId) return;
+    var motivo = ($("cancelMotivo") && $("cancelMotivo").value || "").trim();
+    if (!motivo) {
+      toast("Escriba el motivo de la cancelación", "warning");
+      return;
+    }
+    if (motivo.length > 500) motivo = motivo.slice(0, 500);
+    var necesitaDup = $("cancelDuplicadoBox") && $("cancelDuplicadoBox").style.display !== "none";
+    var confirmado = $("cancelConfirmarDuplicado") && $("cancelConfirmarDuplicado").checked;
+    if (necesitaDup && !confirmado) {
+      toast("Marque la confirmación del duplicado o cierre sin cancelar. No se modificó nada.", "warning");
+      return;
+    }
+    if ($("btnConfirmarCancelar") && $("btnConfirmarCancelar").disabled) return;
+    ejecutarCancelacion(state.cancelacionObjetivoId, motivo, !!confirmado);
+  });
+
+  function renderCancelaciones() {
+    var tbody = $("cancelacionesBody");
+    var el = $("cancelacionesEstado");
+    if (!tbody) return;
+    var q = ($("cancelBuscarTicket") && $("cancelBuscarTicket").value || "").trim().toLowerCase();
+    var desde = ($("cancelFechaDesde") && $("cancelFechaDesde").value) || "";
+    var hasta = ($("cancelFechaHasta") && $("cancelFechaHasta").value) || "";
+    var list = (state.cancelaciones || []).filter(function (v) {
+      if (q && String(v.numeroTicket).toLowerCase().indexOf(q) < 0) return false;
+      var fecha = isoFechaLocal(v.fechaCancelacion || v.fecha);
+      if ((desde || hasta) && !fecha) return false;
+      if (desde && fecha < desde) return false;
+      if (hasta && fecha > hasta) return false;
+      return true;
+    });
+    if (el) {
+      el.textContent = "Registros de cancelación: " + (state.cancelaciones || []).length +
+        (list.length !== (state.cancelaciones || []).length ? " · mostrados: " + list.length : "");
+    }
+    if (!list.length) {
+      tbody.innerHTML = '<tr><td colspan="7">Sin cancelaciones</td></tr>';
+      return;
+    }
+    tbody.innerHTML = list.map(function (v) {
+      return "<tr><td>#" + escapeHtml(String(v.numeroTicket != null ? v.numeroTicket : "—")) +
+        "</td><td>" + formatDateTime(v.fecha) + "</td><td>" + formatDateTime(v.fechaCancelacion) +
+        "</td><td>" + formatMoney(v.total) + "</td><td>" + escapeHtml(v.motivoCancelacion || "") +
+        "</td><td>" + escapeHtml(v.usuarioCancelacion || "") +
+        "</td><td><button type='button' class='btn btn-sm btn-secondary' data-ver-cancel='" + v.id +
+        "'>Detalle</button></td></tr>";
+    }).join("");
+    tbody.querySelectorAll("[data-ver-cancel]").forEach(function (b) {
+      b.addEventListener("click", function () { verDetalleCancelacion(b.getAttribute("data-ver-cancel")); });
+    });
+  }
+
+  function cargarCancelaciones() {
+    var el = $("cancelacionesEstado");
+    if (!db) {
+      if (el) el.textContent = "Firebase no está conectado.";
+      return;
+    }
+    if (el) el.textContent = "Consultando cancelaciones…";
+    db.collection(COL.ventas).where("estado", "==", "CANCELADA").get().then(function (snap) {
+      state.cancelaciones = [];
+      snap.forEach(function (d) { state.cancelaciones.push(docVenta(d)); });
+      state.cancelaciones.sort(function (a, b) { return (b.fechaCancelacion || 0) - (a.fechaCancelacion || 0); });
+      renderCancelaciones();
+    }).catch(function (err) {
+      if (el) el.textContent = "No se pudo consultar: " + (err.message || err);
+    });
+  }
+
+  function verDetalleCancelacion(ventaId) {
+    var v = (state.cancelaciones || []).find(function (x) { return x.id === ventaId; });
+    if (!v) return;
+    state.cancelacionObjetivoId = v.id;
+    state.detalleActual = {
+      ticket: {
+        id: v.id, ventaId: v.id, numero: v.numeroTicket, fecha: v.fecha, total: v.total,
+        tipoPago: v.tipoPago, items: v.items || [], estado: "CANCELADA", cancelada: true
+      },
+      venta: v, otras: [], movimientos: []
+    };
+    pintarDetalleVenta();
+    openModal("modalDetalleVenta");
+    cargarPaqueteVenta(v.id).then(function (pack) {
+      pack.ticket = state.detalleActual.ticket;
+      state.detalleActual = pack;
+      pintarDetalleVenta();
+    }).catch(function (err) { toast(err.message || String(err), "error"); });
+  }
+
+  safeOn("cancelBuscarTicket", "input", renderCancelaciones);
+  safeOn("cancelFechaDesde", "change", renderCancelaciones);
+  safeOn("cancelFechaHasta", "change", renderCancelaciones);
 
   function connectFirebase() {
     if (firebaseConnectTimeout) clearTimeout(firebaseConnectTimeout);

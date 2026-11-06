@@ -28,8 +28,8 @@ const ROLES = {
 
 /** Secciones permitidas por rol (protección de vistas) */
 const SECCIONES_POR_ROL = {
-  admin: ["dashboard", "contable", "ventas", "inventario", "clientes", "cotizaciones", "caja"],
-  empleado: ["ventas", "caja"]
+  admin: ["dashboard", "contable", "ventas", "inventario", "clientes", "cotizaciones", "caja", "cancelaciones"],
+  empleado: ["ventas", "caja", "cancelaciones"]
 };
 
 let db = null;

@@ -82,6 +82,14 @@
       (session.user && session.user.email) || "";
   };
 
+  window.posGetRol = function () {
+    return session.role || "";
+  };
+
+  window.posGetUid = function () {
+    return session.user && session.user.uid ? session.user.uid : "";
+  };
+
   function applyRoleUI() {
     var isAdmin = session.role === ROLES.ADMIN;
     document.querySelectorAll("[data-role-only]").forEach(function (el) {

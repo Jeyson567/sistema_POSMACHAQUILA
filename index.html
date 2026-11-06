@@ -49,6 +49,7 @@
       <li data-role-only="admin"><a href="#" data-section="clientes"><span class="nav-icon">👥</span> Clientes</a></li>
       <li data-role-only="admin"><a href="#" data-section="cotizaciones"><span class="nav-icon">📋</span> Cotizaciones</a></li>
       <li><a href="#" data-section="caja"><span class="nav-icon">💰</span> Caja</a></li>
+      <li><a href="#" data-section="cancelaciones"><span class="nav-icon">↩</span> Cancelaciones</a></li>
     </ul>
     <div class="sidebar-user">
       <p class="sidebar-user-name" id="userDisplayName">—</p>
@@ -138,7 +139,10 @@
     <section id="inventario" class="section">
       <div class="page-header">
         <h2>Inventario</h2>
-        <button type="button" class="btn btn-primary" id="btnNuevoProducto">+ Producto</button>
+        <div class="toolbar">
+          <button type="button" class="btn btn-secondary" id="btnDescargarInventario">Descargar inventario</button>
+          <button type="button" class="btn btn-primary" id="btnNuevoProducto">+ Producto</button>
+        </div>
       </div>
       <div class="panel">
         <div class="panel-header">
@@ -231,6 +235,42 @@
             <thead><tr><th>Apertura</th><th>Cierre</th><th>Inicial</th><th>Final</th><th>Ventas</th></tr></thead>
             <tbody id="cortesBody"></tbody>
           </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="cancelaciones" class="section">
+      <div class="page-header"><h2>Historial de cancelaciones</h2></div>
+      <div class="panel">
+        <div class="panel-header">
+          <div class="form-grid" style="width:100%">
+            <div class="form-group">
+              <label for="cancelBuscarTicket">Número de ticket</label>
+              <input type="text" id="cancelBuscarTicket" placeholder="Ej. 125">
+            </div>
+            <div class="form-group">
+              <label for="cancelFechaDesde">Cancelación desde</label>
+              <input type="date" id="cancelFechaDesde">
+            </div>
+            <div class="form-group">
+              <label for="cancelFechaHasta">Cancelación hasta</label>
+              <input type="date" id="cancelFechaHasta">
+            </div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <p id="cancelacionesEstado" style="color:var(--text-muted);font-size:.9rem;margin-bottom:.75rem">Abra esta sección para consultar las ventas canceladas.</p>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Ticket</th><th>Venta</th><th>Cancelación</th><th>Total</th>
+                  <th>Motivo</th><th>Usuario</th><th></th>
+                </tr>
+              </thead>
+              <tbody id="cancelacionesBody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
@@ -363,12 +403,35 @@
         <button type="button" class="modal-close" data-close="modalTickets">&times;</button>
       </div>
       <div class="modal-body">
-        <input type="text" class="search-input" id="ticketBuscar" placeholder="Número ticket o fecha..." style="width:100%;margin-bottom:1rem">
-        <div class="table-wrap">
+        <div class="form-grid" style="margin-bottom:1rem">
+          <div class="form-group">
+            <label for="ticketBuscar">Buscar</label>
+            <input type="text" id="ticketBuscar" placeholder="Número, fecha o texto">
+          </div>
+          <div class="form-group">
+            <label for="ticketBuscarNumero">Número de ticket</label>
+            <input type="text" id="ticketBuscarNumero" inputmode="numeric" placeholder="Ej. 125">
+          </div>
+          <div class="form-group">
+            <label for="ticketBuscarFecha">Fecha</label>
+            <input type="date" id="ticketBuscarFecha">
+          </div>
+          <div class="form-group">
+            <label for="ticketBuscarImporte">Importe</label>
+            <input type="number" id="ticketBuscarImporte" step="0.01" min="0" placeholder="Ej. 250">
+          </div>
+        </div>
+        <p id="ticketsHistorialEstado" style="color:var(--text-muted);font-size:.85rem;margin-bottom:.75rem"></p>
+        <div class="table-wrap" style="max-height:360px;overflow-y:auto">
           <table class="data-table">
-            <thead><tr><th>#</th><th>Fecha</th><th>Total</th><th></th></tr></thead>
+            <thead><tr><th>#</th><th>Fecha</th><th>Total</th><th>Estado</th><th></th></tr></thead>
             <tbody id="ticketsListBody"></tbody>
           </table>
+        </div>
+        <div class="toolbar" style="margin-top:.75rem">
+          <button type="button" class="btn btn-secondary btn-sm" id="ticketPaginaPrev">Anterior</button>
+          <span id="ticketPaginaInfo" style="font-size:.85rem;color:var(--text-muted)"></span>
+          <button type="button" class="btn btn-secondary btn-sm" id="ticketPaginaNext">Siguiente</button>
         </div>
       </div>
     </div>
@@ -422,6 +485,51 @@
     </div>
   </div>
 
+  <div class="modal-overlay" id="modalDetalleVenta">
+    <div class="modal" style="max-width:720px">
+      <div class="modal-header">
+        <h3 id="detalleVentaTitulo">Detalle de venta</h3>
+        <button type="button" class="modal-close" data-close="modalDetalleVenta">&times;</button>
+      </div>
+      <div class="modal-body" id="detalleVentaBody"></div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-close="modalDetalleVenta">Cerrar</button>
+        <button type="button" class="btn btn-secondary" id="btnReimprimirDetalle">Reimprimir</button>
+        <button type="button" class="btn btn-danger" id="btnAbrirCancelarVenta">Cancelar venta</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modalCancelarVenta">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Cancelar venta</h3>
+        <button type="button" class="modal-close" data-close="modalCancelarVenta">&times;</button>
+      </div>
+      <form id="formCancelarVenta">
+        <div class="modal-body">
+          <p>Ticket: <strong id="cancelTicketNum">—</strong></p>
+          <p>Importe: <strong id="cancelTicketTotal">—</strong></p>
+          <p id="cancelAviso" style="margin-top:.75rem;font-size:.9rem"></p>
+          <div id="cancelDuplicadoBox" style="display:none;margin-top:.75rem">
+            <label style="display:flex;gap:.5rem;align-items:flex-start;font-size:.9rem">
+              <input type="checkbox" id="cancelConfirmarDuplicado">
+              <span>Confirmo que estas ventas son la misma operación duplicada. Se marcarán todas como canceladas y el inventario se devolverá una sola vez. Si fueron ventas reales distintas, no marque esta casilla.</span>
+            </label>
+          </div>
+          <div class="form-group" style="margin-top:1rem">
+            <label for="cancelMotivo">Motivo de cancelación *</label>
+            <textarea id="cancelMotivo" rows="3" required placeholder="Escriba el motivo"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-close="modalCancelarVenta">Volver</button>
+          <button type="submit" class="btn btn-danger" id="btnConfirmarCancelar">Confirmar cancelación</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   </div>
 
   <div class="toast-container" id="toastContainer"></div>
@@ -431,7 +539,9 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script src="js/firebase.js"></script>
+  <script src="js/operaciones.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/app.js"></script>
   <script>
